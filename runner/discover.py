@@ -48,6 +48,40 @@ MODERN_REGISTER: Tuple[str, ...] = (
     "prioritize", "prioritise", "dynamic", "systemic", "optimize", "optimise",
 )
 
+# "-ly" words that are adjectives/nouns, not adverbs - excluded so adverb
+# density doesn't fire on ordinary vocabulary. Not exhaustive; extend per
+# project if a false positive shows up in a report.
+ADVERB_EXCLUDE: Set[str] = {
+    "family", "only", "early", "holy", "ally", "supply", "apply", "rely",
+    "imply", "reply", "comply", "multiply", "monopoly", "anomaly", "assembly",
+    "fly", "butterfly", "likely", "unlikely", "friendly", "unfriendly",
+    "lonely", "lovely", "lively", "homely", "orderly", "disorderly", "costly",
+    "deadly", "ghostly", "kindly", "unkindly", "leisurely", "lowly", "manly",
+    "womanly", "monthly", "weekly", "yearly", "daily", "hourly", "elderly",
+    "stately", "timely", "untimely", "goodly", "gadfly", "dragonfly",
+    "belly", "bully", "silly", "jolly", "folly", "rally", "chilly", "ugly",
+}
+ADVERB_WORD = re.compile(r"\b(\w+ly)\b")
+
+# Dialogue attribution verbs surveyed for "said"/"asked" dominance.
+# Bestseller-DNA target: "said" as dominant tag - see skills/book-editor/SKILL.md.
+DIALOGUE_TAG_VERBS: Tuple[str, ...] = (
+    "said", "asked", "replied", "answered", "told", "whispered", "shouted",
+    "murmured", "muttered", "exclaimed", "cried", "retorted", "snapped",
+    "hissed", "growled", "drawled", "sighed", "breathed", "admitted",
+    "continued", "added", "interrupted", "insisted", "protested", "demanded",
+    "offered", "suggested", "warned", "agreed", "countered", "argued",
+    "laughed", "chuckled", "grumbled", "stammered", "sneered",
+)
+_TAG_VERB_ALT = "|".join(DIALOGUE_TAG_VERBS)
+# Post-tag: '"...," said Mary.' - verb right after the closing quote.
+TAG_AFTER_QUOTE = re.compile(
+    r'["”]\s*,?\s*(' + _TAG_VERB_ALT + r")\b", re.IGNORECASE)
+# Pre-tag: 'Mary said, "..."' - verb right before the opening quote, name
+# (or pronoun) immediately before the verb.
+TAG_BEFORE_QUOTE = re.compile(
+    r"\b\w+\s+(" + _TAG_VERB_ALT + r')[,:]?\s*["“]', re.IGNORECASE)
+
 # Mechanical line defects - pure pattern, zero judgment.
 # Purely-typographic defects (repeated whitespace, four-or-more dots,
 # doubled words) live in runner/proof.py instead — proof answers "is this
@@ -428,6 +462,31 @@ def speaker_stats(by_speaker: Dict[str, List[str]], *, min_lines: int = 5) -> Li
     return out
 
 
+def voice_collisions(
+    stats: Sequence[SpeakerStats],
+    *,
+    line_word_gap: float = 1.5,
+    question_gap: float = 0.10,
+    contraction_gap: float = 0.02,
+) -> List[Tuple[str, str]]:
+    """Speaker pairs whose measurable dialogue signature is indistinguishable.
+
+    Automates the "cover the name" test: if you covered the attribution, could
+    you tell these two characters apart from the dialogue alone? A close match
+    on average line length, question rate, and contraction rate says no -
+    necessary but not sufficient for real differentiation. Treat a hit as a
+    prompt to read the lines, not as a verdict.
+    """
+    collisions: List[Tuple[str, str]] = []
+    for i, a in enumerate(stats):
+        for b in stats[i + 1:]:
+            if (abs(a.avg_line_words - b.avg_line_words) < line_word_gap
+                    and abs(a.question_rate - b.question_rate) < question_gap
+                    and abs(a.contraction_rate - b.contraction_rate) < contraction_gap):
+                collisions.append((a.speaker, b.speaker))
+    return collisions
+
+
 # --------------------------------------------------------------------------
 # Readability
 # --------------------------------------------------------------------------
@@ -455,6 +514,38 @@ def dialogue_ratio(text: str) -> float:
         return 0.0
     spoken = sum(len(WORD.findall(m.group(1))) for m in DIALOGUE.finditer(text))
     return spoken / total
+
+
+def adverb_density(text: str) -> Tuple[int, int]:
+    """(adverb_count, total_words). Heuristic: '-ly' words minus a stopword
+    list of '-ly' adjectives/nouns (family, only, likely...). Imprecise by
+    nature - it will miss adverbs that don't end in -ly and occasionally
+    over/under count - but it is the same cheap signal already used ad hoc
+    elsewhere in this pipeline, now with a threshold instead of just a count.
+    """
+    words = WORD.findall(text)
+    total = len(words)
+    n = sum(
+        1 for w in words
+        if len(w) > 3 and w.lower().endswith("ly")
+        and w.lower() not in ADVERB_EXCLUDE
+    )
+    return n, total
+
+
+def dialogue_tag_counts(text: str) -> Counter:
+    """Tally dialogue attribution verbs ('said', 'exclaimed', 'retorted'...).
+
+    Used to check that 'said'/'asked' dominate, per the bestseller-DNA target.
+    Frequent synonym tags are a common amateur/AI tell - readers skip past
+    'said' but stumble on 'ejaculated' or 'opined'.
+    """
+    counts: Counter = Counter()
+    for m in TAG_AFTER_QUOTE.finditer(text):
+        counts[m.group(1).lower()] += 1
+    for m in TAG_BEFORE_QUOTE.finditer(text):
+        counts[m.group(1).lower()] += 1
+    return counts
 
 
 def modern_register_hits(text: str, extra: Iterable[str] = ()) -> Dict[str, int]:
@@ -565,18 +656,12 @@ def render_structure_report(
     lines.append("")
 
     # Flag speakers whose measurable signature is near-identical.
-    collisions: List[str] = []
-    for i, a in enumerate(stats):
-        for b in stats[i + 1:]:
-            if (abs(a.avg_line_words - b.avg_line_words) < 1.5
-                    and abs(a.question_rate - b.question_rate) < 0.10
-                    and abs(a.contraction_rate - b.contraction_rate) < 0.02):
-                collisions.append(f"{a.speaker} / {b.speaker}")
+    collisions = voice_collisions(stats)
     lines.append("## Voice Collisions")
     lines.append("")
     if collisions:
-        for c in collisions:
-            lines.append(f"- {c} — statistically indistinguishable")
+        for a, b in collisions:
+            lines.append(f"- {a} / {b} — statistically indistinguishable")
         lines.append("")
         lines.append("These are measurements, not a verdict: matching numbers mean "
                      "the *measurable* signature is identical, which is necessary "

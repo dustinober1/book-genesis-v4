@@ -16,12 +16,17 @@ import re
 from typing import Dict, List, Tuple
 
 from runner.discover import (
+    adverb_density,
+    dialogue_by_speaker,
     dialogue_ratio,
+    dialogue_tag_counts,
     entity_variants,
     flesch_kincaid_grade,
     line_defects,
     modern_register_hits,
     repeated_ngrams,
+    speaker_stats,
+    voice_collisions,
 )
 
 # --------------------------------------------------------------------------
@@ -94,6 +99,7 @@ class ChapterStats:
     sentences: int
     em_dashes: int
     avg_sentence_len: float
+    sentence_len_cv: float
     ends_on_maxim: bool
     opener_counts: Dict[str, int]
 
@@ -136,6 +142,27 @@ class Thresholds:
     sentence_len_max: float = 26.0
     dialogue_ratio_min: float = 0.15
     dialogue_ratio_max: float = 0.62
+
+    # Sentence-length monotony: a chapter can hit the manuscript-wide mean
+    # above while every sentence in it is the same length. CV floor, same
+    # pattern as length_cv for chapters.
+    sentence_cv_min: float = 0.35
+    sentence_monotony_min_sentences: int = 8
+
+    # Phrase escalation: front-third vs back-third density. Catches a tic
+    # that's rare early and common late, which a manuscript-wide average
+    # dilutes into invisibility.
+    escalation_min_last_per_1k: float = 0.4
+    escalation_ratio: float = 2.5
+
+    # Adverb density. 105/10k words = 10.5/1k is the bestseller-DNA target
+    # already documented in skills/book-editor/SKILL.md; this is the first
+    # place it's actually measured instead of just asserted.
+    adverb_per_1k: float = 10.5
+
+    # Dialogue tag variety: "said"/"asked" should dominate attribution tags.
+    min_tag_sample: int = 20
+    said_tag_share_min: float = 0.6
 
     @staticmethod
     def for_profile(profile: str) -> "Thresholds":
@@ -200,6 +227,17 @@ def _ends_on_maxim(text: str) -> bool:
     return bool(MAXIM_MARKERS.search(last)) and not CONCRETE_MARKERS.search(last)
 
 
+def _mean(xs: List[float]) -> float:
+    return sum(xs) / len(xs) if xs else 0.0
+
+
+def _stdev(xs: List[float]) -> float:
+    if len(xs) < 2:
+        return 0.0
+    m = _mean(xs)
+    return (sum((x - m) ** 2 for x in xs) / (len(xs) - 1)) ** 0.5
+
+
 def analyze_chapter(name: str, raw: str, openers: Tuple[str, ...]) -> ChapterStats:
     text = _strip_markdown(raw)
     words = _words(text)
@@ -214,26 +252,21 @@ def analyze_chapter(name: str, raw: str, openers: Tuple[str, ...]) -> ChapterSta
                 opener_counts[opener] = opener_counts.get(opener, 0) + 1
                 break
 
+    sent_lens = [float(len(WORD.findall(s))) for s in sents]
+    sent_lens = [n for n in sent_lens if n > 0]
+    sent_mean = _mean(sent_lens)
+    sent_cv = (_stdev(sent_lens) / sent_mean) if sent_mean else 0.0
+
     return ChapterStats(
         name=name,
         words=len(words),
         sentences=len(sents),
         em_dashes=text.count("—") + text.count("--"),
         avg_sentence_len=(len(words) / len(sents)) if sents else 0.0,
+        sentence_len_cv=sent_cv,
         ends_on_maxim=_ends_on_maxim(text),
         opener_counts=opener_counts,
     )
-
-
-def _mean(xs: List[float]) -> float:
-    return sum(xs) / len(xs) if xs else 0.0
-
-
-def _stdev(xs: List[float]) -> float:
-    if len(xs) < 2:
-        return 0.0
-    m = _mean(xs)
-    return (sum((x - m) ** 2 for x in xs) / (len(xs) - 1)) ** 0.5
 
 
 def lint_manuscript(
@@ -353,15 +386,38 @@ def lint_manuscript(
                 f">={th.min_chapter_words}", "Possibly a stub or truncated file.",
             ))
 
+    # -- sentence-length monotony (rhythm) ----------------------------------
+    # A manuscript-wide mean sentence length can sit comfortably in-band while
+    # one chapter's sentences are all nearly identical in length - flat
+    # mechanical rhythm the mean can't see. Same CV pattern as chapter-length
+    # uniformity above, applied per chapter instead of across chapters.
+    monotone = [
+        s for s in stats
+        if s.sentences >= th.sentence_monotony_min_sentences
+        and s.sentence_len_cv < th.sentence_cv_min
+    ]
+    if monotone:
+        findings.append(Finding(
+            "sentence_monotony", "warn",
+            f"{len(monotone)} chapter(s) below CV {th.sentence_cv_min:.2f}",
+            f">={th.sentence_cv_min:.2f}",
+            "Sentences in these chapters are nearly identical in length - flat "
+            "rhythm even if the manuscript-wide average sentence length is fine. "
+            "Vary short/long on purpose.",
+            [f"{s.name}: CV {s.sentence_len_cv:.2f} ({s.sentences} sentences)"
+             for s in monotone[:6]],
+        ))
+
     # -- discovered phrase repetition --------------------------------------
     # The watchlist above only finds tics someone predicted. This finds the
     # book's own, which is where the real damage usually is.
     stripped_by_file = {n: _strip_markdown(r) for n, r in raw_by_file.items()}
-    for hit in repeated_ngrams(
+    ngram_hits = repeated_ngrams(
         stripped_by_file,
         min_count=th.ngram_min_count,
         min_per_10k=th.ngram_per_10k,
-    ):
+    )
+    for hit in ngram_hits:
         if any(hit.phrase in f.measured.lower() for f in findings
                if f.check == "phrase_repetition"):
             continue  # already reported via the watchlist
@@ -371,6 +427,44 @@ def lint_manuscript(
             f"<={th.ngram_per_10k:.1f}/10k",
             "Recurring construction not on any watchlist. Verify it is deliberate.",
         ))
+
+    # -- phrase escalation (front-third vs back-third density) -------------
+    # "A phrase used twice in chapter 2 becomes eighty uses by chapter 14" -
+    # a manuscript-wide average dilutes exactly this pattern into invisibility
+    # because the early chapters drag the mean down. Compare thirds instead.
+    if len(stats) >= 6:
+        third = max(1, len(stats) // 3)
+        first_names = [s.name for s in stats[:third]]
+        last_names = [s.name for s in stats[-third:]]
+        first_text = _strip_markdown("\n\n".join(raw_by_file[n] for n in first_names))
+        last_text = _strip_markdown("\n\n".join(raw_by_file[n] for n in last_names))
+        first_1k = max(len(WORD.findall(first_text)) / 1000.0, 0.001)
+        last_1k = max(len(WORD.findall(last_text)) / 1000.0, 0.001)
+
+        seen_escalation: set = set()
+        for phrase in list(phrases) + [h.phrase for h in ngram_hits]:
+            key = phrase.lower()
+            if key in seen_escalation:
+                continue
+            seen_escalation.add(key)
+            pattern = re.compile(r"\b" + re.escape(phrase) + r"\b", re.IGNORECASE)
+            first_n = len(pattern.findall(first_text))
+            last_n = len(pattern.findall(last_text))
+            first_d = first_n / first_1k
+            last_d = last_n / last_1k
+            if last_d < th.escalation_min_last_per_1k:
+                continue
+            if first_d > 0 and last_d / first_d < th.escalation_ratio:
+                continue
+            if first_d == 0 and last_n < 2:
+                continue
+            findings.append(Finding(
+                "phrase_escalation", "warn",
+                f'"{phrase}": {first_d:.2f}/1k early -> {last_d:.2f}/1k late',
+                f"<={th.escalation_ratio:.1f}x growth",
+                "This tic compounds across the manuscript - rare early, common "
+                "late. A whole-book average would have hidden it.",
+            ))
 
     # -- readability and dialogue ratio ------------------------------------
     fk = flesch_kincaid_grade(joined)
@@ -396,6 +490,56 @@ def lint_manuscript(
             "dialogue_ratio", "warn", f"{dr:.0%} of words are in dialogue",
             f"{th.dialogue_ratio_min:.0%}-{th.dialogue_ratio_max:.0%}",
             "Outside the profile's band.",
+        ))
+
+    # -- adverb density ------------------------------------------------------
+    adverb_n, adverb_total = adverb_density(joined)
+    adverb_1k = (adverb_n / (adverb_total / 1000.0)) if adverb_total else 0.0
+    if adverb_1k > th.adverb_per_1k:
+        findings.append(Finding(
+            "adverb_density", "warn",
+            f"{adverb_n} '-ly' words, {adverb_1k:.1f}/1k words",
+            f"<={th.adverb_per_1k:.1f}/1k",
+            "Heuristic ('-ly' words minus a stopword list of non-adverbs like "
+            "'family', 'only', 'likely'), so treat as a prompt to sample, not "
+            "an exact count.",
+        ))
+
+    # -- dialogue tag variety -------------------------------------------------
+    tag_counts = dialogue_tag_counts(joined)
+    total_tags = sum(tag_counts.values())
+    if total_tags >= th.min_tag_sample:
+        plain_share = (tag_counts.get("said", 0) + tag_counts.get("asked", 0)) / total_tags
+        if plain_share < th.said_tag_share_min:
+            fancy = {k: v for k, v in tag_counts.items() if k not in ("said", "asked")}
+            top_fancy = sorted(fancy.items(), key=lambda kv: -kv[1])[:6]
+            findings.append(Finding(
+                "dialogue_tag_variety", "warn",
+                f'"said"/"asked" are {plain_share:.0%} of {total_tags} attribution tags',
+                f">={th.said_tag_share_min:.0%}",
+                "Bestseller dialogue defaults to \"said\"/\"asked\" - readers skip "
+                "past them but stumble on synonym tags. Frequent \"exclaimed\", "
+                "\"retorted\", etc. reads as amateur or AI-assisted.",
+                [f'"{k}" x{v}' for k, v in top_fancy],
+            ))
+
+    # -- voice collisions -----------------------------------------------------
+    # Automates the "cover the name" test: do two speaking characters' dialogue
+    # signatures (line length, question rate, contraction rate) measure as
+    # indistinguishable? A hit is a prompt to read the lines, not a verdict -
+    # matching numbers are necessary but not sufficient for real differentiation.
+    by_speaker, _ = dialogue_by_speaker(joined)
+    speakers = speaker_stats(by_speaker)
+    collisions = voice_collisions(speakers)
+    if collisions:
+        findings.append(Finding(
+            "voice_collision", "warn",
+            f"{len(collisions)} pair(s) statistically indistinguishable",
+            "0 collisions",
+            "Measurable dialogue signature (avg line length, question rate, "
+            "contraction rate) matches closely enough that the cover-the-name "
+            "test would likely fail. Differentiate speech patterns.",
+            [f"{a} / {b}" for a, b in collisions],
         ))
 
     # -- modern register ---------------------------------------------------

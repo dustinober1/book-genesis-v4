@@ -25,8 +25,10 @@ from runner.timeline import (  # noqa: E402
 )
 from runner.discover import (  # noqa: E402
     absence_gaps,
+    adverb_density,
     dialogue_by_speaker,
     dialogue_ratio,
+    dialogue_tag_counts,
     entity_variants,
     flesch_kincaid_grade,
     line_defects,
@@ -34,6 +36,7 @@ from runner.discover import (  # noqa: E402
     presence_matrix,
     repeated_ngrams,
     speaker_stats,
+    voice_collisions,
 )
 
 
@@ -145,6 +148,81 @@ class LintTests(unittest.TestCase):
     def test_report_renders_without_error(self) -> None:
         self._write("ch01.md", "She set the bread down. " * 100)
         self.assertIn("Manuscript Lint", render_report(lint_manuscript(self.chapters)))
+
+    def test_sentence_monotony_flagged(self) -> None:
+        sentence = "She walked to the door and opened it slowly today."
+        self._write("ch01.md", " ".join([sentence] * 12))
+        report = lint_manuscript(self.chapters)
+        found = _findings(report, "sentence_monotony")
+        self.assertTrue(found, "expected sentence-length monotony warning")
+        self.assertEqual("warn", found[0].severity)
+
+    def test_varied_sentence_length_not_flagged(self) -> None:
+        body = ("Go. " "She waited by the heavy oak door until the bell rang twice more. "
+                 "Rain. " "He counted the coins on the table without looking up once.") * 6
+        self._write("ch01.md", body)
+        report = lint_manuscript(self.chapters)
+        self.assertFalse(_findings(report, "sentence_monotony"))
+
+    def test_phrase_escalation_flagged(self) -> None:
+        for i in range(9):
+            n = 1 if i < 3 else 8
+            body = "She set the bread down and waited by the door. " * 20
+            body += "It was exactly what she expected. " * n
+            self._write(f"ch{i:02d}.md", body)
+        report = lint_manuscript(self.chapters)
+        found = _findings(report, "phrase_escalation")
+        self.assertTrue(found, "expected phrase escalation warning")
+        self.assertIn("exactly", found[0].measured)
+
+    def test_stable_phrase_rate_not_escalation_flagged(self) -> None:
+        for i in range(9):
+            body = "She set the bread down and waited by the door. " * 20
+            body += "It was exactly what she expected. " * 2
+            self._write(f"ch{i:02d}.md", body)
+        report = lint_manuscript(self.chapters)
+        self.assertFalse(_findings(report, "phrase_escalation"))
+
+    def test_adverb_density_flagged(self) -> None:
+        body = "She quickly quietly softly slowly carefully gently ran home. " * 30
+        self._write("ch01.md", body)
+        report = lint_manuscript(self.chapters)
+        found = _findings(report, "adverb_density")
+        self.assertTrue(found, "expected adverb density warning")
+
+    def test_ordinary_ly_words_not_flagged_as_adverbs(self) -> None:
+        body = "The family lived a lonely, friendly, orderly life near the assembly. " * 30
+        self._write("ch01.md", body)
+        report = lint_manuscript(self.chapters)
+        self.assertFalse(_findings(report, "adverb_density"))
+
+    def test_dialogue_tag_variety_flagged(self) -> None:
+        body = ('"Go now." exclaimed Mary. ' * 15) + ('"Wait." retorted John. ' * 15)
+        self._write("ch01.md", body)
+        report = lint_manuscript(self.chapters)
+        found = _findings(report, "dialogue_tag_variety")
+        self.assertTrue(found, "expected dialogue tag variety warning")
+
+    def test_said_dominant_not_flagged(self) -> None:
+        body = ('"Go now," said Mary. ' * 15) + ('"Wait," asked John. ' * 15)
+        self._write("ch01.md", body)
+        report = lint_manuscript(self.chapters)
+        self.assertFalse(_findings(report, "dialogue_tag_variety"))
+
+    def test_voice_collision_flagged(self) -> None:
+        body = ('"I will go now." said Mary. ' * 8) + ('"I will go now." said John. ' * 8)
+        self._write("ch01.md", body)
+        report = lint_manuscript(self.chapters)
+        found = _findings(report, "voice_collision")
+        self.assertTrue(found, "expected voice collision warning")
+        self.assertIn("Mary", found[0].citations[0])
+
+    def test_differentiated_voices_not_flagged(self) -> None:
+        body = ('"Do you think so? Truly?" asked Mary. ' * 8) + \
+               ('"No." said John. ' * 8)
+        self._write("ch01.md", body)
+        report = lint_manuscript(self.chapters)
+        self.assertFalse(_findings(report, "voice_collision"))
 
 
 class TimelineTests(unittest.TestCase):
@@ -328,6 +406,36 @@ class DiscoverTests(unittest.TestCase):
         self.assertIn("Mary", stats)
         self.assertIn("Peter", stats)
         self.assertGreater(stats["Mary"].question_rate, stats["Peter"].question_rate)
+
+    def test_adverb_density_excludes_non_adverbs(self) -> None:
+        n, total = adverb_density("The family lived a lonely, friendly life.")
+        self.assertEqual(0, n)
+        self.assertGreater(total, 0)
+
+    def test_adverb_density_counts_true_adverbs(self) -> None:
+        n, _ = adverb_density("She quickly and quietly closed the heavy door.")
+        self.assertEqual(2, n)
+
+    def test_dialogue_tag_counts_post_tag(self) -> None:
+        counts = dialogue_tag_counts('"Go now," said Mary. "Wait," exclaimed John.')
+        self.assertEqual(1, counts["said"])
+        self.assertEqual(1, counts["exclaimed"])
+
+    def test_dialogue_tag_counts_pre_tag(self) -> None:
+        counts = dialogue_tag_counts('Mary said, "Go now." John exclaimed, "Wait."')
+        self.assertEqual(1, counts["said"])
+        self.assertEqual(1, counts["exclaimed"])
+
+    def test_voice_collisions_detects_matching_signature(self) -> None:
+        text = ('"I will go now." said Mary. ' * 8) + ('"I will go now." said John. ' * 8)
+        stats = speaker_stats(dialogue_by_speaker(text)[0])
+        pairs = voice_collisions(stats)
+        self.assertEqual([("Mary", "John")], pairs)
+
+    def test_voice_collisions_none_for_differentiated_speakers(self) -> None:
+        text = ('"Do you think so? Truly?" asked Mary. ' * 8) + ('"No." said John. ' * 8)
+        stats = speaker_stats(dialogue_by_speaker(text)[0])
+        self.assertEqual([], voice_collisions(stats))
 
 
 if __name__ == "__main__":
