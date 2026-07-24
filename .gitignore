@@ -21,19 +21,21 @@ book-genesis-audit-temp*/
 __pycache__/
 *.pyc
 
-# Output
-output/
-manuscript/
-evaluations/
-delivery/
-voice-bank/
+# Output (anchored to repo root — a project scaffolded inside a checkout,
+# e.g. under examples/ or a scratch dir at top level, should not have its
+# manuscript/state silently untracked at arbitrary depth)
+/output/
+/manuscript/
+/evaluations/
+/delivery/
+/voice-bank/
 *.epub
 *.pdf
 *.docx
 
 # State files (user-specific)
-STATE.yaml
-PROJECT_STATE.yaml
+/STATE.yaml
+/PROJECT_STATE.yaml
 
 # Claude
 .claude/

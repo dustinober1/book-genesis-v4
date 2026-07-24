@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    name: Runner tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Run test suite
+        run: python3 -m unittest discover -s tests -v
+
+  demo-smoke:
+    name: Demo pipeline smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run demo end to end
+        run: |
+          python3 runner/cli.py demo /tmp/ci-demo-book
+          python3 runner/cli.py status /tmp/ci-demo-book
+
+      - name: Verify all gates pass
+        run: |
+          python3 runner/cli.py gate /tmp/ci-demo-book --phase "Phase 3: Drafting"
+          python3 runner/cli.py gate /tmp/ci-demo-book --phase "Phase 7: Production"
+
+      - name: Verify a valid EPUB was produced
+        run: |
+          test -f /tmp/ci-demo-book/delivery/epub/book.epub
+          python3 -c "
+          from pathlib import Path
+          from runner.compile import validate_epub
+          problems = validate_epub(Path('/tmp/ci-demo-book/delivery/epub/book.epub'))
+          assert problems == [], problems
+          print('EPUB validated with no structural issues.')
+          "
+
+      - name: Verify installed-runner layout resolves paths correctly
+        run: |
+          mkdir -p /tmp/installed-runner/skills
+          cp -R runner /tmp/installed-runner/runner
+          cp -R skills/book-genesis-codex /tmp/installed-runner/skills/book-genesis-codex
+          cp -R skills/book-bestseller-studio /tmp/installed-runner/skills/book-bestseller-studio
+          find /tmp/installed-runner -name '__pycache__' -type d -exec rm -rf {} + || true
+          BOOK_GENESIS_HOME=/tmp/installed-runner python3 -c "
+          import sys
+          sys.path.insert(0, '/tmp/installed-runner')
+          from runner.filesystem import load_manifest
+          phases = load_manifest()
+          assert len(phases) == 8, phases
+          print('Installed-runner layout resolved', len(phases), 'phases.')
+          "

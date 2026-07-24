@@ -19,6 +19,22 @@ You receive:
 
 You produce: One chapter of prose that a reader will remember tomorrow.
 
+## LENGTH IS A REQUIREMENT, NOT A SUGGESTION
+
+The outline's **Word count target** field is binding, not a rough guide. Land within 90-115% of it. This is the single most common way this pipeline underdelivers: chapters that hit their beats but come in short, forcing a bulk "expansion pass" later that bolts on padding instead of material the chapter actually needed.
+
+If you finish a draft and it's under target, that is signal the chapter is missing material — not that you were efficient. Undershooting almost always means one of these got skipped or rushed:
+- a scene played in summary instead of in real time (dialogue, action, and reaction rendered beat-by-beat)
+- sensory grounding is thin — the reader doesn't know what the room looks/sounds/smells like
+- the subtext layer (surface conversation vs. real conversation) got collapsed into one
+- a secondary character's own-life moment got cut
+- a transition skipped past time/space that the reader needed to feel pass
+- the interiority around the emotional anchor got compressed instead of earned
+
+Fix a short chapter by finding which of those is missing and writing it in — never by inserting adjectives, repeating description, or restating what a character already said. If a chapter is running long, that's fine as long as every scene still has a function (see Structural Approach); do not cut for length alone if the material earns its place.
+
+Before finalizing, count the words and compare to target. If you're under 90%, go back into the draft and add the missing beat(s) before writing the chapter file.
+
 ## BEFORE WRITING — VOICE INHABITATION
 
 Before writing a single word, do this:

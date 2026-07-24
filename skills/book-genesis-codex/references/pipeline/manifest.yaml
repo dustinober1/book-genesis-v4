@@ -17,6 +17,7 @@ phase_1_foundation:
     - "artifacts/03-characters.md"
     - "artifacts/04-theme.md"
     - "artifacts/06-emotional-curve.md"
+  genre_pack_outputs: "Additional artifacts may be declared by knowledge/genre-packs/<genre>.md when a pack matches project.genre. Never required when no pack matches. Documentation only - not read by runner/filesystem.py."
   next: "Phase 2: Architecture"
 
 phase_2_architecture:
@@ -34,6 +35,11 @@ phase_3_drafting:
   gate: "drafting"
   outputs:
     - "manuscript/chapters"
+  checks:
+    - "timeline"
+    - "lint"
+    - "chapter_order"
+    - "wordcount:0.85:1.25"
   next: "Phase 4: Adversarial Audit"
 
 phase_4_adversarial_audit:
@@ -42,6 +48,11 @@ phase_4_adversarial_audit:
   gate: "adversarial_audit"
   outputs:
     - "artifacts/08-adversarial-audit.md"
+  checks:
+    - "timeline:required"
+    - "lint"
+    - "chapter_order"
+    - "wordcount:0.85:1.25"
   next: "Phase 5: Final Score"
 
 phase_5_final_score:
@@ -58,4 +69,21 @@ phase_6_editorial_package:
   gate: "editorial_package"
   outputs:
     - "artifacts/10-editorial-package.md"
+  next: "Phase 7: Production"
+
+phase_7_production:
+  label: "Phase 7: Production"
+  prompt: "references/prompts/production.md"
+  gate: "production"
+  outputs:
+    - "BOOK.yaml"
+    - "manuscript/full-manuscript.md"
+    - "delivery/production/pre-publication-checklist.md"
+    - "delivery/epub"
+  checks:
+    - "book_meta"
+    - "chapter_order"
+    - "proof"
+    - "wordcount:0.85:1.25"
+    - "epub"
   next: ""

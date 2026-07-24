@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 import json
 from pathlib import Path
 from typing import Dict, List
 
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-SKILL_ROOT = REPO_ROOT / "skills" / "book-genesis-codex"
-MANIFEST_PATH = SKILL_ROOT / "references" / "pipeline" / "manifest.yaml"
+from runner import paths as _paths
 
 
 @dataclass(frozen=True)
@@ -20,6 +17,7 @@ class Phase:
     gate: str
     outputs: List[str]
     next: str
+    checks: List[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -49,12 +47,8 @@ ARTIFACT_HEADINGS: Dict[str, str] = {
     "10-editorial-package.md": "Editorial Package",
 }
 
-BESTSELLER_STUDIO_ROOT = REPO_ROOT / "skills" / "book-bestseller-studio"
-AGENT_REGISTRY_PATH = BESTSELLER_STUDIO_ROOT / "references" / "agent-registry.yaml"
-
-
 def load_manifest() -> List[Phase]:
-    entries = _load_simple_yaml_map(MANIFEST_PATH)
+    entries = _load_simple_yaml_map(_paths.manifest_path())
     return [
         Phase(
             key=key,
@@ -63,13 +57,14 @@ def load_manifest() -> List[Phase]:
             gate=str(entry.get("gate", "")),
             outputs=list(entry.get("outputs", [])),
             next=str(entry.get("next", "")),
+            checks=list(entry.get("checks", [])),
         )
         for key, entry in entries.items()
     ]
 
 
 def load_agent_registry() -> List[AgentSpec]:
-    entries = _load_simple_yaml_map(AGENT_REGISTRY_PATH)
+    entries = _load_simple_yaml_map(_paths.agent_registry_path())
     return [
         AgentSpec(
             key=key,
@@ -135,8 +130,16 @@ def scaffold_project(
 
     for phase in phases:
         for output in phase.outputs:
+            path = target / output
             if output.startswith("artifacts/"):
-                path = target / output
+                write_if_needed(path, artifact_template(Path(output).name), force=force)
+            elif output == "BOOK.yaml":
+                from runner.compile import book_meta_template  # local import: avoid a cycle
+                write_if_needed(path, book_meta_template(), force=force)
+            elif output.endswith(".md") and "/" in output:
+                # e.g. manuscript/full-manuscript.md, delivery/production/*.md
+                # -- non-artifact file outputs that still need a template
+                # stub so pending_outputs() has something to check.
                 write_if_needed(path, artifact_template(Path(output).name), force=force)
 
 
@@ -167,7 +170,7 @@ def load_state_summary(target: Path) -> Dict[str, str]:
 
 def prepare_phase(target: Path) -> Path:
     phase = current_phase(target)
-    prompt_path = SKILL_ROOT / phase.prompt
+    prompt_path = _paths.skill_root() / phase.prompt
     prompt_text = prompt_path.read_text(encoding="utf-8")
     output_list = "\n".join(f"- {item}" for item in phase.outputs)
 
@@ -282,7 +285,7 @@ def prepare_agent_packet(target: Path, agent_key: str) -> Path:
     output_lines = "\n".join(f"- `{item}`" for item in agent.outputs) or "- No required outputs listed."
     gate_lines = "\n".join(f"- {item}" for item in agent.gates) or "- No gates listed."
 
-    skill_path = REPO_ROOT / agent.skill
+    skill_path = _paths.repo_root() / agent.skill
     skill_excerpt = ""
     if skill_path.exists():
         skill_excerpt = skill_path.read_text(encoding="utf-8").strip()
@@ -315,13 +318,31 @@ def prepare_agent_packet(target: Path, agent_key: str) -> Path:
     return packet_path
 
 
-def advance_phase(target: Path) -> Dict[str, object]:
+def advance_phase(target: Path, *, skip_checks: bool = False) -> Dict[str, object]:
+    from runner.gates import evaluate_gate, write_gate_report  # local import: avoid a cycle
+
     phase = current_phase(target)
     pending = pending_outputs(target, phase.outputs)
     if pending:
-        return {"ok": False, "pending": pending, "next_phase": phase.label}
+        return {"ok": False, "pending": pending, "next_phase": phase.label, "failed_checks": [], "report": ""}
 
     state = target / "PROJECT_STATE.yaml"
+
+    failed_checks: List[str] = []
+    report_text = ""
+    if skip_checks:
+        state_set(target, "pipeline.gates_bypassed", phase.gate, create=True)
+    else:
+        verdict = evaluate_gate(target, phase)
+        write_gate_report(target, verdict)
+        report_text = "\n".join(f"{r.name}: {r.status}" for r in verdict.results)
+        if not verdict.ok:
+            failed_checks = [f"{r.name}: {r.summary}" for r in verdict.blocking]
+            return {
+                "ok": False, "pending": [], "next_phase": phase.label,
+                "failed_checks": failed_checks, "report": report_text,
+            }
+
     _update_state_value(state, phase.gate, "passed")
 
     if phase.next:
@@ -332,7 +353,10 @@ def advance_phase(target: Path) -> Dict[str, object]:
         _update_state_value(state, "status", "completed")
         _update_state_value(state, "current_gate", "")
 
-    return {"ok": True, "pending": [], "next_phase": phase.next or "completed"}
+    return {
+        "ok": True, "pending": [], "next_phase": phase.next or "completed",
+        "failed_checks": [], "report": report_text,
+    }
 
 
 def create_demo(target: Path, *, adapter: str, model_name: str) -> None:
@@ -376,9 +400,14 @@ def pending_outputs(target: Path, outputs: List[str]) -> List[str]:
     pending: List[str] = []
     for output in outputs:
         path = target / output
-        if output == "manuscript/chapters":
-            chapters = list(path.glob("*.md")) if path.exists() else []
-            if not chapters:
+        # Any directory-shaped output (manuscript/chapters, delivery/epub,
+        # etc.) is satisfied by >=1 non-empty file inside it, not by a
+        # single hardcoded special case -- a second directory output must
+        # not need a second branch here (and must not IsADirectoryError
+        # below when we try to read it as a file).
+        if path.is_dir() or output.endswith("/") or "." not in Path(output).name:
+            files = [p for p in path.glob("**/*") if p.is_file()] if path.exists() else []
+            if not any(f.stat().st_size > 0 for f in files):
                 pending.append(output)
             continue
         if not path.exists():
@@ -396,14 +425,25 @@ def fill_outputs_for_demo(target: Path, phase: Phase) -> None:
         if output == "manuscript/chapters":
             chapters_dir = target / "manuscript" / "chapters"
             chapters_dir.mkdir(parents=True, exist_ok=True)
-            (chapters_dir / "chapter-01.md").write_text(
-                "# Chapter 1\n\nThe archivist found the same sentence written in three hands.\n",
+            for name, text in _DEMO_CHAPTERS.items():
+                (chapters_dir / name).write_text(text, encoding="utf-8")
+            (target / "TIMELINE.md").write_text(_DEMO_TIMELINE, encoding="utf-8")
+            state_set(target, "project.word_count_target", "900", create=True)
+            continue
+        if output == "BOOK.yaml":
+            from runner.compile import book_meta_template  # local import: avoid a cycle
+            path.write_text(
+                book_meta_template(title="The Ledger", author="Demo Author"),
                 encoding="utf-8",
             )
-            (chapters_dir / "chapter-02.md").write_text(
-                "# Chapter 2\n\nBy dawn, the audit log had started correcting him back.\n",
-                encoding="utf-8",
-            )
+            continue
+        if output == "manuscript/full-manuscript.md":
+            from runner.compile import compile_manuscript_md, load_book_meta  # local import
+            compile_manuscript_md(target, load_book_meta(target))
+            continue
+        if output == "delivery/epub":
+            from runner.compile import build_epub, load_book_meta  # local import
+            build_epub(target, load_book_meta(target))
             continue
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
@@ -412,6 +452,127 @@ def fill_outputs_for_demo(target: Path, phase: Phase) -> None:
             "This content is intentionally short. It exists to prove the workflow contract.\n",
             encoding="utf-8",
         )
+
+
+# The demo fixture must genuinely pass the deterministic gates (runner/gates.py),
+# not merely produce non-empty files. It exists to prove the whole workflow
+# contract end to end, gates included -- see tests/test_runner.py::test_demo_passes_all_gates.
+_DEMO_CHAPTERS: Dict[str, str] = {
+    "chapter-01.md": (
+        "# Chapter 1: The Ledger\n\n"
+        "Mira Voss set the lantern on the workbench and pried open the crate. "
+        "Sawdust drifted across her sleeve and settled on the floorboards. "
+        "Inside, wrapped in oilcloth, lay a bound ledger stamped with a seal "
+        "she failed to place.\n\n"
+        "\"You are not supposed to touch that,\" said Devon from the doorway. "
+        "He carried a mug of cold coffee and looked like he had not slept in "
+        "two days.\n\n"
+        "\"Somebody has to open it,\" Mira said, turning the first page. The "
+        "ink had faded to rust, but the handwriting shifted between three "
+        "different hands, switching mid-sentence without warning.\n\n"
+        "\"Read it out loud,\" Devon said. \"I want to hear how bad it "
+        "actually is.\"\n\n"
+        "She read the first line aloud. The old pipes ticked louder than "
+        "usual, and Devon set his mug down on the workbench, careful not to "
+        "spill it near the open crate.\n\n"
+        "\"That is my handwriting,\" he said, leaning closer. \"I never wrote "
+        "a word of this.\"\n\n"
+        "Mira closed the ledger and pressed her palm flat against the "
+        "leather cover, feeling the grain under her fingers. Outside, a "
+        "truck rumbled past on the gravel road, and the window glass "
+        "rattled once before it settled.\n\n"
+        "Devon reached for the ledger, then stopped, his hand hovering an "
+        "inch above the cover. \"Put it back in the crate,\" he said. "
+        "\"Tonight. Before anyone else sees it.\"\n"
+    ),
+    "chapter-02.md": (
+        "# Chapter 2: Second Hand\n\n"
+        "By dawn the crate sat right where Devon had left it, but the "
+        "ledger was gone from the shelf. Mira found it open on the kitchen "
+        "table, a fresh page filling itself while she watched, the pen "
+        "resting untouched beside it.\n\n"
+        "\"Devon,\" she called. No answer came from upstairs.\n\n"
+        "She sat down across from the ledger and read the new line: a "
+        "description of the argument they had just had, word for word, "
+        "written before either of them said it aloud a second time. She "
+        "pushed the plate of toast aside and leaned in.\n\n"
+        "Footsteps came down the stairs, slow and uneven. Devon stopped in "
+        "the kitchen doorway, one hand braced against the frame.\n\n"
+        "\"It wrote what we said last night,\" Mira told him, sliding the "
+        "ledger across the table. \"Before we said it.\"\n\n"
+        "He picked up the pen and turned it over between his fingers, "
+        "studying the nib as though it might explain itself. \"Then we stop "
+        "talking near it,\" he said finally, setting the pen down beside "
+        "the plate.\n\n"
+        "Mira shook her head and closed the cover. \"Somebody wrote the "
+        "first page decades ago. That did not stop anything.\" She carried "
+        "the ledger to the window and held it up to the grey morning "
+        "light, checking the binding for a printer's mark.\n\n"
+        "Outside, a dog barked twice at the mail truck and went quiet.\n"
+    ),
+    "chapter-03.md": (
+        "# Chapter 3: The Archive\n\n"
+        "The county archive smelled of dust and cold radiator paint. Mira "
+        "handed the clerk a slip with the ledger's seal copied onto it in "
+        "pencil.\n\n"
+        "\"Where did you find this mark?\" the clerk asked, turning the "
+        "paper under the desk lamp.\n\n"
+        "\"On a ledger my neighbor inherited,\" Mira said. \"It keeps "
+        "writing things that have not happened yet.\"\n\n"
+        "The clerk set the paper down without laughing, which surprised "
+        "her more than a dismissal would have. He walked to a locked "
+        "cabinet in the back room and returned with a thin folder tied in "
+        "twine.\n\n"
+        "\"Three families have brought me that seal,\" he said, untying the "
+        "string with careful fingers. \"Each one swore the book started "
+        "blank.\"\n\n"
+        "Inside the folder were photographs of the same ledger, cracked "
+        "spine and all, dated across nearly a hundred years. Mira spread "
+        "them across the counter and counted the handwriting styles: five, "
+        "maybe six.\n\n"
+        "\"Somebody keeps passing it along,\" she said.\n\n"
+        "\"Or something keeps bringing it back,\" the clerk answered. He "
+        "tapped the earliest photograph, a sepia print of a woman holding "
+        "the ledger against her chest like a shield. \"That one disappeared "
+        "three weeks after this was taken.\"\n\n"
+        "Mira gathered the photographs into a neat stack and slid them "
+        "back into the folder, her hands steadier than she expected them "
+        "to be.\n"
+    ),
+    "chapter-04.md": (
+        "# Chapter 4: What the Page Knew\n\n"
+        "Devon was waiting on the porch steps when Mira got home, the "
+        "ledger closed on his knees. He had not gone inside.\n\n"
+        "\"It wrote your name again,\" he said, holding the cover shut with "
+        "both hands. \"And a date. Tomorrow's date.\"\n\n"
+        "Mira sat down beside him and took the ledger carefully, the "
+        "leather still warm from his grip. She opened it to the last page "
+        "and read the line under the date: a single sentence, plain and "
+        "short, naming the archive and the clerk's folder of "
+        "photographs.\n\n"
+        "\"It already knows where we went,\" she said.\n\n"
+        "\"Then we stop feeding it new pages,\" Devon said. \"We put it "
+        "back in the ground where the crate came from and we leave it.\"\n\n"
+        "Mira turned to the first blank leaf after the newest entry. For a "
+        "long moment neither of them spoke, and the porch light buzzed "
+        "once overhead. She had never liked that porch light, the way it "
+        "hummed before it caught, but tonight she did not reach to turn it "
+        "off. She reached for the pen resting in the ledger's spine.\n\n"
+        "\"Or we write the next line ourselves,\" she said, \"before it "
+        "gets the chance.\"\n\n"
+        "She set the nib against the paper. Devon did not stop her. Down "
+        "the street, someone's screen door banged shut, and the ledger's "
+        "blank page waited under her hand.\n"
+    ),
+}
+
+_DEMO_TIMELINE = (
+    'event  id=crate_found     day=0     label="Mira opens the crate"\n'
+    'event  id=ledger_writes   day=1     label="Ledger writes overnight"\n'
+    'event  id=archive_visit   day=3     label="Archive visit"\n'
+    'event  id=porch_scene     day=4     label="Devon waits on the porch"\n\n'
+    'span   from=crate_found   to=porch_scene   stated=4d   src="Ch1-4"\n'
+)
 
 
 def template_for_output(output: str) -> str:
@@ -489,11 +650,17 @@ def _project_state_template(
         "project:\n"
         "  id: \"\"\n"
         "  title: \"\"\n"
+        "  author: \"\"\n"
         f"  idea: \"{_escape_yaml(idea)}\"\n"
         f"  language: \"{_escape_yaml(language)}\"\n"
         "  genre: \"\"\n"
+        "  subgenre: \"\"\n"
         "  audience: \"\"\n"
-        "  target_length: \"\"\n\n"
+        "  target_length: \"\"\n"
+        "  length_tier: \"\"\n"
+        "  word_count_target: 0\n"
+        "  autonomy: \"guided\"\n"
+        "  lint_profile: \"\"\n\n"
         "runtime:\n"
         f"  adapter: \"{_escape_yaml(adapter)}\"\n"
         f"  model_family: \"{_infer_family(model_name)}\"\n"
@@ -512,6 +679,113 @@ def _project_state_template(
         "gates:\n"
         f"{gates}\n"
     )
+
+
+def state_path(target: Path) -> Path:
+    return target / "PROJECT_STATE.yaml"
+
+
+def state_get(target: Path, dotted: str, default: str = "") -> str:
+    """Read a value from PROJECT_STATE.yaml.
+
+    ``dotted`` may be a bare key (``"status"``), which uses the original
+    first-match-anywhere-in-file scan (preserving the long-standing
+    ``pipeline.status`` vs ``manuscript.status`` resolution, since
+    ``pipeline:`` precedes ``manuscript:`` in the template), or a
+    ``block.key`` path (``"project.autonomy"``), which is scoped to the
+    named top-level block only.
+    """
+
+    text = state_path(target).read_text(encoding="utf-8")
+    if "." not in dotted:
+        value = _extract_scalar(text, dotted)
+        return value if value else default
+
+    block, _, key = dotted.partition(".")
+    start, end = _find_block_span(text, block)
+    if start is None:
+        return default
+    lines = text.splitlines()
+    value = _extract_scalar("\n".join(lines[start:end]), key)
+    return value if value else default
+
+
+def state_get_int(target: Path, dotted: str, default: int = 0) -> int:
+    raw = state_get(target, dotted, default=str(default))
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def state_set(target: Path, dotted: str, value: str, *, create: bool = True) -> None:
+    """Write a value into PROJECT_STATE.yaml.
+
+    See ``state_get`` for the bare-key vs ``block.key`` distinction. When
+    ``create`` is True and the key does not exist within its block, it is
+    appended as the block's last line. When ``create`` is False, a missing
+    key raises ``KeyError`` (matching the historical ``_update_state_value``
+    contract).
+    """
+
+    path = state_path(target)
+    if "." not in dotted:
+        _update_state_value(path, dotted, value)
+        return
+
+    block, _, key = dotted.partition(".")
+    text = path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    start, end = _find_block_span(text, block)
+    if start is None:
+        raise KeyError(f"Could not find block {block!r} in {path}")
+
+    prefix = f"{key}:"
+    for index in range(start, end):
+        stripped = lines[index].strip()
+        if stripped.startswith(prefix):
+            indent = lines[index][: len(lines[index]) - len(lines[index].lstrip())]
+            lines[index] = f'{indent}{key}: "{value}"'
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            return
+
+    if not create:
+        raise KeyError(f"Could not update key {key!r} in block {block!r} in {path}")
+
+    # Insert as the last line of the block, before its trailing blank line.
+    insert_at = end
+    while insert_at > start and not lines[insert_at - 1].strip():
+        insert_at -= 1
+    lines.insert(insert_at, f'  {key}: "{value}"')
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _find_block_span(text: str, block: str) -> tuple:
+    """Return (start_index, end_index) line bounds for a top-level block.
+
+    ``start_index`` points at the ``block:`` line itself; ``end_index`` is
+    exclusive and points at the next top-level (zero-indent, non-blank)
+    line, or ``len(lines)`` if the block runs to the end of the file.
+    Returns ``(None, None)`` if the block is not found.
+    """
+
+    lines = text.splitlines()
+    prefix = f"{block}:"
+    start = None
+    for index, line in enumerate(lines):
+        if line.startswith(prefix) and (line[len(prefix) :] == "" or line[len(prefix)] in " \t"):
+            start = index
+            break
+    if start is None:
+        return None, None
+
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        line = lines[index]
+        if line.strip() and not line[0].isspace():
+            end = index
+            break
+    return start, end
 
 
 def _update_state_value(path: Path, key: str, value: str) -> None:

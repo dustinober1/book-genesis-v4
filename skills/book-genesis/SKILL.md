@@ -93,7 +93,8 @@ Read only the prompt for the active phase:
 8. When drafting, write in chapter files under `manuscript/chapters/` and keep the state synchronized.
 9. When user feedback changes direction, record it in project files before continuing.
 10. If the user asks to break a quality threshold such as 8.5, activate the Literary Barrier loop after the adversarial audit and keep iterating until the calibrated critical score clears the threshold or the blocker is documented as requiring human/editorial input.
-11. If the manuscript is below `target_floor_words`, run expansion/re-architecture before any final score or editorial package claims publication readiness.
+11. Check the length gate after every chapter block, not only at the end. If a block's actual word count is `FLAG` or `BLOCK` against `average_words_per_chapter_planned`, fix that block before drafting the next one — add the scene, beat, or interiority it's missing. Waiting until the manuscript is finished to run expansion turns a per-block fix into a bulk padding pass across the whole book, which is the failure mode this rule exists to prevent.
+12. If the manuscript is below `target_floor_words` despite per-block checks, run expansion/re-architecture before any final score or editorial package claims publication readiness.
 
 ## Quality Policy
 

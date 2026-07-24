@@ -81,7 +81,8 @@ Read only the prompt for the active phase:
 - Prefer fewer constraints during drafting; evaluate and repair afterward.
 - Separate drafting, audit, scoring, and editorial judgment in the workflow.
 - Use the Genesis Score floor principle: the book is only as strong as its weakest major dimension.
-- For Portuguese books, write artifacts and prose in Portuguese unless the user requests otherwise.
+- All books are written in English. Do not ask for or record a language choice.
+- Deterministic checks (chronology, manuscript lint) are gates, not suggestions. Run them; do not estimate them.
 - If a task is only editing, scoring, or packaging an existing manuscript, start from the matching phase instead of forcing a full restart.
 
 ## Complementary Skills

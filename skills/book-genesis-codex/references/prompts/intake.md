@@ -2,11 +2,57 @@
 
 You are responsible for Phase 0 of `book-genesis-codex`.
 
+## Language
+
+**All books are written in English.** Do not ask, infer, or record a language choice. Do not add a `language` line to the brief.
+
 ## Input Contract
 
-- The only required input is the user's basic idea.
-- The system may infer language, genre, audience, target length, narrative mode, and market position.
-- Every inference must be written to `ASSUMPTIONS.md`.
+The only required input is the user's basic idea.
+
+Phase 0 front-loads every decision the later phases need, so that Phases 1–6 can run without stopping to ask. Ask the questionnaire below **once, as a single batched message**, then proceed. Anything the user declines to answer becomes an explicit inference in `ASSUMPTIONS.md` — never a mid-pipeline question.
+
+## Intake Questionnaire (ask once, batched)
+
+Present all of these together. Offer the recommended default in each so the user can reply "defaults" and move on.
+
+1. **Length tier** — see the table below. Default: Novel (80,000).
+2. **Genre and subgenre** — subgenre matters; it selects the genre pack.
+3. **Audience** — general trade, book-club, genre-dedicated, or academic-adjacent.
+4. **Narrative mode** — first or third person, past or present tense, single or multi POV.
+5. **Structural stance** — linear, framed/retrospective, or braided timeline.
+6. **Content boundaries** — anything the book must not depict on the page.
+7. **Ending posture** — resolved, ambiguous, or bleak.
+8. **Autonomy level** — see Autonomy below. Default: Guided.
+
+If the project matches a genre pack (`knowledge/genre-packs/`), ask that pack's `## Required Fields` questions in the same batch. For historical fiction that means theological/interpretive stance and the momentum engine.
+
+## Length Tiers
+
+| Tier | Target words | Chapters (typical) | Notes |
+|---|---|---|---|
+| Short story | 3,000–7,500 | 1 | Single arc, one POV |
+| Novelette | 7,500–17,500 | 3–6 | One complication |
+| **Novella** | **17,500–40,000** | **8–16** | Single storyline, tight cast, one turn |
+| Short novel | 40,000–70,000 | 15–25 | Full arc, limited subplot |
+| Novel | 70,000–110,000 | 25–40 | Default |
+| Epic | 110,000+ | 40+ | Multi-POV or multi-volume |
+
+Record the tier **and** the numeric target in `PROJECT_STATE.yaml` as `project.length_tier` and `project.word_count_target`.
+
+**Novella guidance.** A novella is not a short novel with fewer chapters. Constrain deliberately: one central storyline, no more than two subplots, a cast small enough that every named character recurs, and a single structural turn rather than a full three-act escalation. Do not pad toward novel length — if the material genuinely needs more, raise the tier at the Phase 2 gate and say so.
+
+## Autonomy
+
+Record `project.autonomy` in `PROJECT_STATE.yaml`.
+
+| Level | Behavior |
+|---|---|
+| `guided` | Stop at the three standard checkpoints (post-foundation, post-first-chapter, final package). Default. |
+| `auto` | Run Phase 0 → Phase 6 without stopping. Report at the end. Still halts on a hard gate failure. |
+| `manual` | Stop after every phase. |
+
+Under `auto`, do not ask permission to advance. Advance whenever the phase's outputs exist and its gates pass. A **hard gate failure always halts**, regardless of autonomy level — see Quality Gates in `orchestrator.md`.
 
 ## Outputs
 
@@ -22,7 +68,7 @@ Create and update:
 
 - Treat the user's basic idea as the seed, not as a full brief.
 - Convert hidden assumptions into explicit assumptions.
-- Identify 2-4 comp titles.
+- Identify 2-4 comp titles at the chosen length tier — novella comps are not novel comps.
 - Record market gaps and reader promise.
 - Define what makes this version commercially legible without making it generic.
 
@@ -32,12 +78,14 @@ Create and update:
 
 - the original user idea
 - inferred direction
-- language
-- genre
+- genre and subgenre
+- length tier and word count target
 - audience
-- target length
 - narrative mode
+- structural stance
+- ending posture
 - reader promise
+- autonomy level
 
 ## Market Map Requirements
 

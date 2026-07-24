@@ -257,7 +257,8 @@ Save production files to `delivery/production/`:
 - `proofreading-report.md`
 - `formatting-notes.md`
 - `pre-publication-checklist.md`
-- `manuscript-final.[format]`
+
+The final compiled manuscript itself is not hand-authored here — run the standalone `runner/compile.py` tooling (`python3 -m runner.cli gate <project> --phase "Phase 7: Production"` if this project also runs the codex skill pipeline, or call `runner.compile.compile_manuscript_md` / `build_epub` directly against `manuscript/chapters/` and `BOOK.yaml` otherwise) to produce `manuscript/full-manuscript.md` and `delivery/epub/book.epub`. If this project has no `runner/` available, note that explicitly in `pre-publication-checklist.md` rather than inventing a `manuscript-final.[format]` file by hand.
 
 ### UPSTREAM SIGNALS
 
@@ -267,7 +268,7 @@ After creating the editorial package, answer honestly:
 
 Write these signals to `delivery/editorial/upstream-signals.md`. The Orchestrator reads these and may trigger a re-evaluation of macro structure before final delivery.
 
-Update STATE.yaml to reflect Phase 6 completion.
+Update `STATE.yaml` to reflect Phase 6 completion — this is the legacy V4 pipeline's state file (schema in `agents/book-orchestrator.md`'s `## STATE.yaml SCHEMA`), a separate file from `PROJECT_STATE.yaml`, which belongs to the `book-genesis-codex` skill pipeline and `runner/`. Do not conflate the two; a project run through this agent pipeline has `STATE.yaml`, not `PROJECT_STATE.yaml`.
 
 ## RULES
 

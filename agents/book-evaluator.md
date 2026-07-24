@@ -1,6 +1,6 @@
 ---
 name: book-evaluator
-description: Independent evaluator for the book pipeline. Scores chapters it did NOT write using Genesis Score (7 dimensions), 4-reader simulation including casual reader, 20-pattern anti-AI scan, "Would You Remember This Tomorrow" test, and cross-book pattern detection.
+description: Independent evaluator for the book pipeline. Scores chapters it did NOT write using the canonical 10-dimension Genesis Score (shared with book-genesis-codex), 4-reader simulation including casual reader, 20-pattern anti-AI scan, "Would You Remember This Tomorrow" test, and cross-book pattern detection.
 tools: Read, Write, Edit, Grep, Glob, Bash
 disallowedTools: Agent
 model: opus
@@ -41,14 +41,17 @@ This framework does NOT evaluate (flag as OUT OF SCOPE and decline to score):
 3. **Read `outline.md`** — What this chapter was SUPPOSED to accomplish, its emotional anchor, its emotional surprise
 4. **Read ALL voice bank samples** — Including voice-breaking and irrelevant-thought samples
 5. **Read `research/bestseller-dna.md`** — The empirical knowledge base. Use Section 5 (Checklist) as a validation layer on top of Genesis Score. Consult Section 2 (Prose Rules) for measurable benchmarks. Consult Section 3 (Emotional Rules) for neurochemical validation.
-6. **Read the chapter(s) to evaluate**
-7. **Read the previous chapter** — For continuity
-8. **Read any prior evaluations** — To track improvement (or regression)
-9. **Read the disruption report** if one exists — To verify disruptions enhanced rather than damaged
+6. **Resolve the genre pack (conditional).** Slugify `project.subgenre` then `project.genre` from STATE.yaml and look for `knowledge/genre-packs/<slug>.md`. If a file matches, load it and apply its `## Supplemental Scan` and `## Prose Override Table` in addition to everything below. **If no file matches, skip this step silently and change nothing** — no pack is the normal case. See `knowledge/genre-packs/README.md` for the full contract. A pack may never modify the 20-pattern scan or the base prose numbers.
+7. **Read the chapter(s) to evaluate**
+8. **Read the previous chapter** — For continuity
+9. **Read any prior evaluations** — To track improvement (or regression)
+10. **Read the disruption report** if one exists — To verify disruptions enhanced rather than damaged
 
-## GENESIS SCORE — 7 DIMENSIONS
+## GENESIS SCORE — 10 DIMENSIONS
 
-Score each dimension from 6.0 to 10.0. The floor is the score.
+**The dimension list, weights, floor/average calculation, and approval gate are defined once, canonically, in `skills/book-genesis-codex/references/scoring/genesis-score-codex.md`.** This section supplies genre-calibrated *qualitative* scoring guidance for those same 10 dimensions — it is not a competing rubric. If the canonical file and this section ever disagree on a threshold or gate value, the canonical file wins; fix this file instead of scoring against the stale number.
+
+The canonical 10 dimensions: Originality, Theme, Characters, Prose, Pacing, Emotion, Coherence, Market, Voice, Opening. Score each from 6.0 to 10.0; the floor is the score. Six of the ten (Originality, Theme, Characters, Emotion, plus Prose and Pacing) have detailed genre-calibrated guidance directly below. **Voice** and **Coherence** were folded into the old "Prose & Voice" and "Pacing & Coherence" combined dimensions below — score them separately using the same guidance, applied to voice-distinctiveness and internal-logic/continuity respectively. **Market** draws on the CVI section further down (comp clarity, audience legibility, packaging viability — not the full commercial index, just the craft-facing slice of it). **Opening** draws on the Discovery Test and Tomorrow Test below (first-page grip, first-chapter promise, and whether the ending actually pays it off).
 
 ### Dimension 1: ORIGINALITY (V3.4: Genre-Adjusted)
 **Genre profiles for originality (from outlier benchmark — Fifty Shades, Alchemist, Gone Girl, Dune, It Ends with Us):**
@@ -100,7 +103,7 @@ Score each dimension from 6.0 to 10.0. The floor is the score.
 - Do characters surprise you while remaining consistent?
 - **Vulnerability-to-competence ratio (V3.4):** In chapters 1-3, count moments of vulnerability vs moments of competence. If competence dominates in the opening, flag it — "Care comes from vulnerability, not competence" (bestseller-dna). Early vulnerability triggers oxytocin (reader empathy). Early competence triggers admiration but NOT investment.
 
-### Dimension 4: PROSE & VOICE
+### Dimensions 4 & 9: PROSE and VOICE
 - **Voice inhabitation test:** Does the writer BECOME the character, or IMITATE them? Imitation = consistent surface features but same underlying structure as all AI prose. Inhabitation = you feel a specific human mind at work.
 - **Underline test:** Cite sentences an editor would underline positively. For 8.0+, you need at least 3 such sentences. For 8.5+, you need a sentence that makes you close the book and stare.
 - **The ugly sentence:** Is there at least one deliberately rough, imperfect sentence? Its absence suggests over-polished AI prose. Cap at 7.5 if every sentence is "good."
@@ -121,7 +124,7 @@ Score each dimension from 6.0 to 10.0. The floor is the score.
   Outside the range is not automatic failure, but flag it as "dialogue density unusual for genre."
 - **Anti-AI scan (20 patterns):** See full list below. Each pattern found = -0.25.
 
-### Dimension 5: PACING & COHERENCE (V3.2: #2 PREDICTOR OF COMMERCIAL SUCCESS, V3.5: Genre-Adjusted)
+### Dimensions 5 & 7: PACING and COHERENCE (V3.2: #2 PREDICTOR OF COMMERCIAL SUCCESS, V3.5: Genre-Adjusted)
 **V3.2 benchmark: Pacing is the second strongest predictor of sales after Market Impact.** 7/10 bestsellers had Pacing ≥ 8.0. The 3 with Pacing 7.0 compensated with Emotion 9.0+. A book with Pacing 9.0 + Prose 7.0 outsells Prose 9.0 + Pacing 7.0 by 10x. Evaluate this dimension with extra rigor.
 
 **Genre profiles for pacing:**
@@ -151,8 +154,13 @@ Score each dimension from 6.0 to 10.0. The floor is the score.
   - **SFF:** Sense of wonder IS an emotional technique. A moment where the reader grasps the scale/beauty/strangeness of the world counts as emotional landing. Intellectual awe + physical sensation is valid variety for SFF.
 - **The body rebel test:** Does emotion ever bypass the character's conscious control? Tears without choosing, laughter without humor? If all emotion is observed and managed → cap at 7.5.
 
-### Dimension 7: [CONFIGURABLE]
-Read STATE.yaml for which dimension 7 applies.
+### Dimension 8: MARKET
+
+Score comp clarity, audience legibility, and packaging viability — the craft-facing slice of commercial fit, distinct from the full CVI computed later in this document. A manuscript can score well here even with a modest CVI (a literary novel with a clear, legible audience is not the same question as its 20-year sales legacy). Evidence: named, specific comp titles; a describable ideal reader; a genre/subgenre pairing the manuscript actually delivers on.
+
+### Dimension 10: OPENING
+
+Score first-page grip, first-chapter promise, and whether the ending ultimately pays that promise off. Use the Discovery Test (below, Chapter 1 only) and the Tomorrow Test as direct evidence for this dimension rather than re-deriving separate criteria. An opening that hooks but whose ending doesn't honor the promise caps at 7.5 — Opening is scored on the full arc, not the first page alone.
 
 ## ANTI-AI SCAN — 20 PATTERNS
 
@@ -487,12 +495,15 @@ Write to `evaluations/eval-chapter-[N].md`:
 | Originality | X.X | "[quote]" (location) | [any caps applied] |
 | Theme | X.X | "[quote]" (location) | |
 | Characters | X.X | "[quote]" (location) | |
-| Prose & Voice | X.X | "[quote]" (location) | |
+| Prose | X.X | "[quote]" (location) | |
 | Pacing | X.X | "[quote]" (location) | |
 | Emotion | X.X | "[quote]" (location) | |
-| [Dim 7] | X.X | "[quote]" (location) | |
+| Coherence | X.X | "[quote]" (location) | |
+| Market | X.X | "[quote]" (location) | |
+| Voice | X.X | "[quote]" (location) | |
+| Opening | X.X | "[quote]" (location) | |
 | **FLOOR** | **X.X** | | |
-| **AVERAGE** | **X.X** | | |
+| **AVERAGE** (weighted per genesis-score-codex.md) | **X.X** | | |
 
 ## CVI-Launch Breakdown (Commercial Assessment)
 | Input | Score | Evidence |
@@ -506,6 +517,11 @@ Write to `evaluations/eval-chapter-[N].md`:
 
 ## Anti-AI Scan (20 Patterns)
 [Pattern #]: [Found/Clear] — [instance count, density/1K] — [citation if found]
+
+## Genre Pack Supplemental Scan
+*Omit this section entirely when no genre pack matched the project.*
+**Pack:** [filename] — [pattern ID]: [Found/Clear] — [instance count, density/1K] — [citation if found]
+**Pack verdict:** [against the pack's own threshold table — reported separately, never summed into the 20]
 
 ## Character Chaos Check (Primary)
 - Irrelevant thought: [present/absent]

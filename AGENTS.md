@@ -38,7 +38,8 @@ skills/book-genesis-codex/references/pipeline/manifest.yaml
 - Load only the prompt for the active phase.
 - Do not skip Phase 4: Adversarial Audit.
 - Do not run final scoring before the adversarial audit.
-- Write Portuguese artifacts and prose in Portuguese when the book is in Portuguese.
+- All books are written in English. Do not ask for or record a language choice.
+- Run the deterministic gates (`runner/cli.py lint` and `check-timeline`) rather than estimating their results. A non-zero exit halts the pipeline.
 - Treat legacy V4 material as historical reference unless the user asks for it.
 
 ## Agent-Specific Notes

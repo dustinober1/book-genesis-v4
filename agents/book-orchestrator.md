@@ -266,13 +266,14 @@ For EACH chapter (1 through N), in order, run Steps A–G to completion before s
 Dispatch: book-writer
 Prompt: "Write chapter {N} of '{title}'.
 Project dir: {path}
-Read: {path}/outline.md for this chapter's plan (emotional anchor: {anchor}, emotional surprise: {surprise}, structural approach: {approach}).
+Read: {path}/outline.md for this chapter's plan (emotional anchor: {anchor}, emotional surprise: {surprise}, structural approach: {approach}, word count target: {chapter_word_target}).
 Read: {path}/voice-dna.md for voice specs. FOLLOW THEM.
 Read: {path}/voice-bank/ for voice reference.
 Read: {path}/ENTITY_STATE.yaml for canonical facts and who-knows-what.
 {If N>1: Read {path}/manuscript/chapters/chapter-{N-1}.md (the FINALIZED previous chapter) for continuity.}
 {If N==1: Read {path}/research/bestseller-dna.md Section 2 for prose rules and honor foundation.md OPENING STRATEGY.}
 
+Word count target for this chapter: {chapter_word_target}. Land within 90-115% of it — if you undershoot, that means a beat is missing (scene played in summary, thin sensory grounding, cut subtext layer, missing secondary-character moment), not that the chapter is done.
 This chapter's structural approach: {approach}. Previous chapter used: {prev_approach}. DO NOT repeat.
 Secondary characters in this chapter: {names}. Give each ONE moment of their own life.
 Pattern #11 prevention: write similes RAW; do not extend them. Prevention > detection.
@@ -332,7 +333,8 @@ Run directly with the Bash tool against `chapter-{N}.md`:
 3. Grep Pattern #11: `grep -n 'not because\|not .*, but\|the kind of .* that' {chapter}`
 4. Count adverbs: `grep -oiP '\w+ly\b' {chapter} | wc -l`
 5. Check sentence starts; flag 3+ consecutive identical openers.
-6. Log results to `evaluations/preprocess-chapter-{N}.md`.
+6. **Word count check:** `grep -oiP '\b\w+\b' {chapter} | wc -l` vs. this chapter's outline target. Under 85% of target = FLAG `length_short` in the preprocess report — this chapter cannot PASS Step G until fixed (see Step G.2a). Over 130% is a note, not a block, unless Outline Quality Check 7 (no chapter >2x the shortest) is violated.
+7. Log results to `evaluations/preprocess-chapter-{N}.md`.
 
 **Step F — Evaluate:**
 ```
@@ -352,6 +354,7 @@ Two thresholds apply to every chapter:
 - **EXCELLENCE TARGET (all genres): Genesis Floor ≥ 8.5 AND Casual Reader ≥ 8.5.** This is the only PASS. "Good enough" does not exist in this pipeline.
 
 1. Read the evaluation. Read genre from STATE.yaml.
+2a. **Length gate (checked before the score gate).** If Step E flagged `length_short`: **Dispatch: book-editor** with the specific missing beats (from the writer's self-report and preprocess flag) and instructions to write them in, not pad. Re-run Step E's word count check only (no need to re-run the full evaluator) until the chapter clears 85% of target, then proceed to step 2. A chapter never PASSes while flagged `length_short`, regardless of Floor/Casual scores — do not let a high score wave through a short chapter for later "bulk expansion."
 2. **If Floor ≥ 8.5 AND Casual ≥ 8.5: PASS.** Update STATE.yaml (`chapters.completed`, `quality_gate.chapters_passed`, scores), move to the next chapter.
 3. **If Floor ≥ hard floor but < 8.5: POLISH LOOP.** Read the evaluation's "PATH TO 8.5" section. **Dispatch: book-editor** targeting ONLY the 1-2 dimensions holding the floor down, quoting the evaluator's specific lift instructions verbatim plus the full "Strengths to PRESERVE" list. Then re-run Step F. NOTE: the +0.5/cycle anti-inflation rule means 7.5 → 8.5 takes a MINIMUM of 2 cycles — this is expected; budget for it, do not abort early.
 4. **If Floor < hard floor: FAIL.** Identify the top weakness. **Dispatch: book-editor** with specific fix instructions. Re-run Step F.

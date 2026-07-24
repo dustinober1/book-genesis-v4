@@ -8,9 +8,13 @@ REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 SKILLS_DIR="$REPO_DIR/skills"
 KNOWLEDGE_DIR="$REPO_DIR/knowledge"
 AGENTS_DIR="$REPO_DIR/agents"
+RUNNER_DIR="$REPO_DIR/runner"
 TARGET_SKILLS="$HOME/.claude/skills"
 TARGET_KNOWLEDGE="$HOME/.claude/knowledge"
 TARGET_AGENTS="$HOME/.claude/agents"
+TARGET_RUNNER_ROOT="$HOME/.claude/book-genesis-runner"
+TARGET_RUNNER="$TARGET_RUNNER_ROOT/runner"
+RUNNER_SKILL_DEPS=("book-genesis-codex" "book-bestseller-studio")
 
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
@@ -53,6 +57,43 @@ if [ -d "$KNOWLEDGE_DIR" ]; then
       kb_count=$((kb_count + 1))
     fi
   done
+
+  # Knowledge subdirectories (genre-packs/, etc.) are copied whole.
+  for kb_subdir in "$KNOWLEDGE_DIR"/*/; do
+    if [ -d "$kb_subdir" ]; then
+      sub_name=$(basename "$kb_subdir")
+      rm -rf "$TARGET_KNOWLEDGE/$sub_name"
+      mkdir -p "$TARGET_KNOWLEDGE/$sub_name"
+      cp -R "$kb_subdir". "$TARGET_KNOWLEDGE/$sub_name/"
+      sub_files=$(find "$TARGET_KNOWLEDGE/$sub_name" -type f | wc -l | tr -d ' ')
+      echo -e "  ${GREEN}+${NC} knowledge/$sub_name/ ($sub_files files)"
+      kb_count=$((kb_count + sub_files))
+    fi
+  done
+fi
+
+runner_count=0
+if [ -d "$RUNNER_DIR" ]; then
+  rm -rf "$TARGET_RUNNER"
+  mkdir -p "$TARGET_RUNNER"
+  cp -R "$RUNNER_DIR"/. "$TARGET_RUNNER/"
+  find "$TARGET_RUNNER" -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
+  runner_count=$(find "$TARGET_RUNNER" -name '*.py' -type f | wc -l | tr -d ' ')
+  echo -e "  ${GREEN}+${NC} runner/ ($runner_count modules — lint + chronology gates)"
+
+  # The runner resolves the manifest/skill root relative to its own
+  # location (or via BOOK_GENESIS_HOME). Copy the skills it depends on
+  # alongside it so init/prepare-phase/advance-phase/gate/demo work from
+  # an installed copy, not just inside a repo checkout.
+  mkdir -p "$TARGET_RUNNER_ROOT/skills"
+  for dep in "${RUNNER_SKILL_DEPS[@]}"; do
+    if [ -d "$SKILLS_DIR/$dep" ]; then
+      rm -rf "$TARGET_RUNNER_ROOT/skills/$dep"
+      mkdir -p "$TARGET_RUNNER_ROOT/skills/$dep"
+      cp -R "$SKILLS_DIR/$dep"/. "$TARGET_RUNNER_ROOT/skills/$dep/"
+      echo -e "  ${GREEN}+${NC} book-genesis-runner/skills/$dep (runner dependency)"
+    fi
+  done
 fi
 
 agent_count=0
@@ -67,11 +108,17 @@ if [ -d "$AGENTS_DIR" ]; then
 fi
 
 echo ""
-echo -e "${GREEN}Done.${NC} $count skills + $agent_count agents + $kb_count knowledge files installed"
+echo -e "${GREEN}Done.${NC} $count skills + $agent_count agents + $kb_count knowledge files + $runner_count runner modules installed"
 echo ""
 echo -e "Skills:    ${BLUE}$TARGET_SKILLS${NC}"
 echo -e "Agents:    ${BLUE}$TARGET_AGENTS${NC}"
 echo -e "Knowledge: ${BLUE}$TARGET_KNOWLEDGE${NC}"
+echo -e "Runner:    ${BLUE}$TARGET_RUNNER${NC}"
+echo ""
+echo "Quality gates (run from any project directory):"
+echo -e "  ${BLUE}python3 $TARGET_RUNNER_ROOT/runner/cli.py gate <project>${NC}"
+echo -e "  ${BLUE}python3 $TARGET_RUNNER_ROOT/runner/cli.py lint <project>${NC}"
+echo -e "  ${BLUE}python3 $TARGET_RUNNER_ROOT/runner/cli.py check-timeline <project>${NC}"
 echo ""
 echo "Open Claude Code and type /book-genesis or /book-genesis-codex to start writing."
 echo ""

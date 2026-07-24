@@ -19,8 +19,10 @@ from runner.filesystem import (  # type: ignore  # noqa: E402
     prepare_phase,
     prepare_swarm_run,
     scaffold_project,
+    state_set,
     validate_project,
 )
+from runner.gates import evaluate_gate  # type: ignore  # noqa: E402
 
 
 class RunnerTests(unittest.TestCase):
@@ -33,8 +35,8 @@ class RunnerTests(unittest.TestCase):
     def test_manifest_loads_universal_pipeline(self) -> None:
         phases = load_manifest()
         self.assertEqual("Phase 0: Intake", phases[0].label)
-        self.assertEqual("Phase 6: Editorial Package", phases[-1].label)
-        self.assertEqual(7, len(phases))
+        self.assertEqual("Phase 7: Production", phases[-1].label)
+        self.assertEqual(8, len(phases))
 
     def test_market_level_skills_are_packaged(self) -> None:
         bestseller = REPO_ROOT / "skills" / "book-bestseller-studio" / "SKILL.md"
@@ -142,6 +144,76 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual("completed", summary["status"])
         self.assertTrue((self.tempdir / "manuscript" / "chapters" / "chapter-01.md").exists())
         self.assertIn("mechanical demo", (self.tempdir / "RUN_REPORT.md").read_text(encoding="utf-8"))
+
+    def test_demo_passes_all_gates(self) -> None:
+        # The demo must genuinely pass the deterministic gates (lint,
+        # chronology, chapter order), not merely produce non-empty files --
+        # that is the whole point of code-enforced gates existing.
+        create_demo(self.tempdir, adapter="codex", model_name="gpt-5.5")
+        gate_report = self.tempdir / "work" / "gate-report.md"
+        self.assertTrue(gate_report.exists())
+        text = gate_report.read_text(encoding="utf-8")
+        self.assertIn("PASS", text)
+        self.assertNotIn("FAIL", text)
+
+    def test_advance_blocked_by_broken_chronology(self) -> None:
+        # Drafting is the first phase with a "timeline" check. Fill its
+        # outputs normally, then corrupt the timeline with a genuine
+        # contradiction and confirm advance_phase refuses to advance.
+        scaffold_project(self.tempdir, idea="", adapter="codex", model_name="gpt-5.5")
+        for relative in [
+            "ASSUMPTIONS.md",
+            "artifacts/00-brief.md",
+            "artifacts/01-market-map.md",
+            "artifacts/02-story-engine.md",
+        ]:
+            (self.tempdir / relative).write_text(f"# Filled {relative}\n\nReal content.\n", encoding="utf-8")
+        self.assertTrue(advance_phase(self.tempdir)["ok"])  # -> Phase 1
+
+        for relative in ["artifacts/03-characters.md", "artifacts/04-theme.md", "artifacts/06-emotional-curve.md"]:
+            (self.tempdir / relative).write_text(f"# Filled {relative}\n\nReal content.\n", encoding="utf-8")
+        self.assertTrue(advance_phase(self.tempdir)["ok"])  # -> Phase 2
+
+        for relative in ["artifacts/05-outline.md", "artifacts/07-opening-strategy.md"]:
+            (self.tempdir / relative).write_text(f"# Filled {relative}\n\nReal content.\n", encoding="utf-8")
+        self.assertTrue(advance_phase(self.tempdir)["ok"])  # -> Phase 3: Drafting
+
+        chapters_dir = self.tempdir / "manuscript" / "chapters"
+        chapters_dir.mkdir(parents=True, exist_ok=True)
+        (chapters_dir / "chapter-01.md").write_text(
+            "# Chapter 1\n\n"
+            "A quiet morning passed without incident, the kind of ordinary "
+            "hour that gives a reader room to breathe before the trouble "
+            "starts down the road.\n",
+            encoding="utf-8",
+        )
+
+        # A timeline with a genuine age contradiction: nine years pass
+        # between two events, but the stated ages only differ by one.
+        (self.tempdir / "TIMELINE.md").write_text(
+            'event  id=start  day=0     label="Story opens"\n'
+            'event  id=later  day=3287  label="Nine years later"\n\n'
+            'age    person=kid  at=start  years=9   src="Ch1"\n'
+            'age    person=kid  at=later  years=10  src="Ch1"\n',
+            encoding="utf-8",
+        )
+
+        result = advance_phase(self.tempdir)
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("timeline" in item for item in result["failed_checks"]))
+
+    def test_gate_reports_error_on_unknown_check_token(self) -> None:
+        # A typo in the manifest's checks: list must block the gate, not
+        # silently skip it.
+        scaffold_project(self.tempdir, idea="", adapter="codex", model_name="gpt-5.5")
+        phase = load_manifest()[0]
+        broken_phase = type(phase)(
+            key=phase.key, label=phase.label, prompt=phase.prompt, gate=phase.gate,
+            outputs=[], next=phase.next, checks=["not_a_real_check"],
+        )
+        verdict = evaluate_gate(self.tempdir, broken_phase)
+        self.assertFalse(verdict.ok)
+        self.assertEqual(["error"], [r.status for r in verdict.results])
 
     def test_cli_init_runs_by_path(self) -> None:
         project = self.tempdir / "cli-project"
