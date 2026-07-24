@@ -51,6 +51,30 @@ Get-ChildItem -Path $SkillsDir -Directory | ForEach-Object {
     }
 }
 
+# skills/optional/ holds skills book-genesis-full (Production Mode) dispatches
+# to but Craft Mode doesn't need by default (voice-fingerprint, reader-persona,
+# entity-tracker, continuity-guardian, book-auto). Install them flattened into
+# the same skills/ namespace so /book-genesis-full's phase dispatches resolve.
+# skills/deprecated/ is intentionally NOT installed -- see
+# skills/book-genesis-full/SKILL.md's "Post-V6 Recalibration" section.
+$optionalSkillsDir = Join-Path $SkillsDir "optional"
+if (Test-Path $optionalSkillsDir) {
+    Get-ChildItem -Path $optionalSkillsDir -Directory | ForEach-Object {
+        $skillName = $_.Name
+        $skillFile = Join-Path $_.FullName "SKILL.md"
+        if (Test-Path $skillFile) {
+            $destDir = Join-Path $TargetSkills $skillName
+            if (Test-Path $destDir) {
+                Remove-Item -LiteralPath $destDir -Recurse -Force
+            }
+            New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+            Copy-Item -Path (Join-Path $_.FullName "*") -Destination $destDir -Recurse -Force
+            Write-Host "  + $skillName (optional, used by book-genesis-full)" -ForegroundColor Green
+            $count++
+        }
+    }
+}
+
 $kbCount = 0
 if (Test-Path $KnowledgeDir) {
     Get-ChildItem -Path $KnowledgeDir -Filter "*.md" | ForEach-Object {

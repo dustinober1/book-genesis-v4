@@ -48,6 +48,27 @@ for skill_dir in "$SKILLS_DIR"/*/; do
   fi
 done
 
+# skills/optional/ holds skills book-genesis-full (Production Mode) dispatches
+# to but Craft Mode doesn't need by default (voice-fingerprint, reader-persona,
+# entity-tracker, continuity-guardian, book-auto). Install them flattened into
+# the same skills/ namespace so /book-genesis-full's phase dispatches resolve.
+# skills/deprecated/ (chaos-engine, quality-gate, dialogue-polish, hook-craft,
+# mechanical-preprocess) is intentionally NOT installed — a benchmark found
+# these hurt output quality or they were merged into book-editor; see
+# skills/book-genesis-full/SKILL.md's "Post-V6 Recalibration" section.
+if [ -d "$SKILLS_DIR/optional" ]; then
+  for skill_dir in "$SKILLS_DIR/optional"/*/; do
+    skill_name=$(basename "$skill_dir")
+    if [ -f "$skill_dir/SKILL.md" ]; then
+      rm -rf "$TARGET_SKILLS/$skill_name"
+      mkdir -p "$TARGET_SKILLS/$skill_name"
+      cp -R "$skill_dir". "$TARGET_SKILLS/$skill_name/"
+      echo -e "  ${GREEN}+${NC} $skill_name (optional, used by book-genesis-full)"
+      count=$((count + 1))
+    fi
+  done
+fi
+
 kb_count=0
 if [ -d "$KNOWLEDGE_DIR" ]; then
   for kb_file in "$KNOWLEDGE_DIR"/*.md; do

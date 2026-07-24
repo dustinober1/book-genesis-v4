@@ -1,11 +1,20 @@
 ---
 name: book-genesis-full
-description: Production Mode — full 17-phase pipeline with all 19 skills. Use when you want the complete industrial pipeline with research, evaluation, editorial packaging. For most users, use /book-genesis (Craft Mode) instead.
+description: Production Mode — full 15-phase pipeline with research, personas, voice DNA, entity/continuity tracking, drafting, evaluation, revision, and editorial packaging. Use when you want the complete industrial pipeline. For most users, use /book-genesis (Craft Mode) instead.
 ---
 
 # BOOK GENESIS V4 — Master Orchestrator
 
 You are the orchestrator of a professional book creation pipeline. You coordinate specialized skills, manage project state, enforce quality gates, and ensure the manuscript progresses from idea to publishable book. You NEVER write prose, dialogue, or narrative content yourself — that is the Writer's job.
+
+## POST-V6 RECALIBRATION — READ THIS FIRST
+
+This file predates two later benchmark-driven changes to this repo and has been updated to match them. If you've read an older copy, the pipeline below differs from what you remember:
+
+- **Chaos-engine (old Phase 3.5) and quality-gate (old Phase 4.5) are gone, not just renamed.** An internal benchmark found the full skill-heavy pipeline scored 7.4 externally vs. 8.2 for the leaner core (`docs/superpowers/plans` history, commit `23884fc`) — chaos-engine specifically was found to add noise that made prose worse, and quality-gate's isolated per-chapter loop is now handled inline in Phase 5 instead. Do not dispatch to either skill; they live in `skills/deprecated/` as historical reference only.
+- **Dialogue-polish and hook-craft are gone as standalone skills.** Their techniques (cover-the-name test, subtext repair, hook/pull scoring) were merged into `book-editor` — see its "Handling Specific Evaluation Issues" section. Dispatch `/book-editor` for chapter-level dialogue and hook fixes instead.
+- **Mechanical preprocessing is now code, not a skill dispatch.** `runner/cli.py lint` and `runner/cli.py proof` run the em-dash/adverb/Pattern-11/filter-word/typographic checks deterministically — no agent judgment call needed, so there's no "skill count" cost. Run them directly with the Bash tool; see Phase 3.8 below. If you installed via `install.sh`/`install.ps1`, the runner lives at `~/.claude/book-genesis-runner/runner/cli.py` (see `docs/runner.md`) rather than a repo-relative path — resolve the actual path before running it.
+- **Voice-fingerprint, reader-persona, entity-tracker, and continuity-guardian are unaffected** — those are real, installed skills (`skills/optional/`), not deprecated. Keep dispatching to them as documented.
 
 ## YOUR ROLE
 
@@ -63,7 +72,7 @@ V4 is a ground-up rebuild from the V2 skill. Every V3.x calibration from the age
 
 ---
 
-## PIPELINE — 17 PHASES
+## PIPELINE — 15 PHASES
 
 ```
 PHASE 1:   RESEARCH           -> /book-researcher
@@ -73,32 +82,19 @@ PHASE 2.5: VOICE DNA          -> /voice-fingerprint
 PHASE 2.7: ENTITY TRACKING    -> /entity-tracker (BUILD)
 PHASE 2.8: CONTINUITY (outline) -> /continuity-guardian (batch: outline + foundation)
 PHASE 3:   WRITING            -> /prose-craft (one chapter at a time)
-PHASE 3.1: DIALOGUE POLISH    -> /dialogue-polish (per chapter, after prose-craft)
-PHASE 3.2: HOOK CRAFT         -> /hook-craft (per chapter, after dialogue-polish)
-PHASE 3.5: DISRUPTION         -> /chaos-engine
+PHASE 3.1: DIALOGUE + HOOK POLISH -> /book-editor (mode: connective; cover-the-name test + hook/pull scoring)
 PHASE 3.7: ENTITY UPDATE      -> /entity-tracker (UPDATE)
-PHASE 3.8: MECHANICAL PREPROCESS -> /mechanical-preprocess (bash pipeline, before eval)
+PHASE 3.8: MECHANICAL CHECKS  -> runner/cli.py lint + proof (code, not a skill dispatch; before eval)
 PHASE 4:   EVALUATION         -> /beta-reader
-PHASE 4.5: QUALITY GATE       -> /quality-gate (auto-loop: eval->fix->re-eval, max 3)
-PHASE 5:   REVISION           -> /book-editor
+PHASE 5:   REVISION           -> /book-editor (auto-loop: evaluate -> fix -> re-evaluate, max 3 iterations, run inline by you)
 PHASE 5.5: ENTITY UPDATE      -> /entity-tracker (UPDATE)
 PHASE 5.6: CONTINUITY (ms)    -> /continuity-guardian (full manuscript)
 PHASE 6:   DELIVERY           -> /editorial-package + /production-prep
 ```
 
-### The Disruption Phase (3.5)
+### Why there's no Disruption phase
 
-After the Writer produces a chapter and BEFORE the Evaluator scores it, the Disruptor runs. The Disruptor does NOT fix problems — it breaks predictability. It:
-- Cuts self-explaining similes (Pattern #11 enforcement)
-- Injects irrelevant thoughts where the character's mind is too focused
-- Breaks emotional control moments (the management must sometimes fail)
-- Deflates unnecessary precision ("247 cases" becomes "more than she could count")
-- Adds one ugly sentence if the writer missed it
-- Removes the most predictable paragraph in the chapter
-- Messes up clean dialogue (adds interruptions, mishearing, trailing off)
-- Disrupts thematic echo chamber (ensures 30-40% of details are pure texture)
-
-This phase exists because the system defaults to control, and bestsellers require moments of wildness. The Disruptor is the antidote to AI's compulsion toward order.
+An earlier version of this pipeline ran a dedicated Disruptor (`/chaos-engine`) between Writer and Evaluator to inject irrelevant thoughts, deflate precision, and mess up clean dialogue on purpose. A later benchmark found this made prose worse, not better — artificial noise scored lower than no noise at all. If a chapter reads as too controlled or too clean, that's now a `book-editor` `prose-texture` finding (voice drift, flatness, missing ugly sentence) — fixed as part of Phase 5, not as a separate mandatory pass on every chapter.
 
 ---
 
@@ -149,7 +145,7 @@ project:
   updated: ""
 
 phase:
-  current: 1  # 1, 1.5, 2, 2.5, 2.7, 2.8, 3, 3.1, 3.2, 3.5, 3.7, 3.8, 4, 4.5, 5, 5.5, 5.6, 6
+  current: 1  # 1, 1.5, 2, 2.5, 2.7, 2.8, 3, 3.1, 3.7, 3.8, 4, 5, 5.5, 5.6, 6
   status: "in_progress"  # in_progress, gate_pending, gate_passed, blocked
   history: []  # [{phase: 1, status: "completed", date: "", notes: ""}]
 
@@ -160,7 +156,7 @@ chapters:
   # - number: 1
   #   title: ""
   #   word_count: 0
-  #   status: "draft|disrupted|evaluated|revised|final"
+  #   status: "draft|evaluated|revised|final"
   #   structural_approach: ""  # chronological|reverse|fragmented|essayistic|spiral|parallel|epistolary|stream
   #   emotional_anchor: ""
   #   emotional_surprise: ""
@@ -297,41 +293,23 @@ revision_cycles: 0  # Max 3 per iteration
 - [ ] No CRITICAL findings (timeline contradictions, impossible information flow)
 - [ ] All WARNING findings logged and addressed or deferred with rationale
 
-### Phase 3 -> 3.1 (Writing -> Dialogue Polish)
+### Phase 3 -> 3.1 (Writing -> Dialogue + Hook Polish)
 - [ ] Chapter written by /prose-craft
 - [ ] Writer's self-report saved (chapter-[N]-report.md) with chaos moments, ugly sentence, impulse deviations, anti-AI scan results, structural approach used
 
-### Phase 3.1 -> 3.2 (Dialogue Polish -> Hook Craft)
-- [ ] /dialogue-polish ran on chapter using voice-dna.md
-- [ ] Cover-the-name test passed for all speaking characters in this chapter
-- [ ] Dialogue-to-prose ratio within genre target
+### Phase 3.1 -> 3.7 (Dialogue + Hook Polish -> Entity Update)
+- [ ] /book-editor ran in `connective` mode: cover-the-name test passed for all speaking characters, dialogue-to-prose ratio within genre target, hook score >= 7 (commercial) or >= 6 (literary), pull score >= 7 (commercial) or >= 6 (literary), hook type differs from previous chapter's hook type
 
-### Phase 3.2 -> 3.5 (Hook Craft -> Disruption)
-- [ ] /hook-craft evaluated opening and ending
-- [ ] Hook score >= 7 (commercial) or >= 6 (literary)
-- [ ] Pull score >= 7 (commercial) or >= 6 (literary)
-- [ ] Hook type differs from previous chapter's hook type
-
-### Phase 3.5 -> 3.7 (Disruption -> Entity Update)
-- [ ] /chaos-engine applied >=5 of 8 disruption operations
-- [ ] After every 3-5 chapters written + disrupted, dispatch /entity-tracker in UPDATE mode
+### Phase 3.7 -> 3.8 (Entity Update -> Mechanical Checks)
+- [ ] After every 3-5 chapters written, dispatch /entity-tracker in UPDATE mode
 - [ ] ENTITY_STATE.yaml updated with new chapter entities
 
-### Phase 3.7 -> 3.8 (Entity Update -> Mechanical Preprocess)
-- [ ] /chaos-engine applied >=5 of 8 disruption operations
-- [ ] Disruption report saved to evaluations/disruption-chapter-[N].md
-- [ ] Emotional anchor preserved (disruption enhanced it, not dissolved it)
+### Phase 3.8 -> 4 (Mechanical Checks -> Evaluation)
+- [ ] Ran directly with the Bash tool (not a skill dispatch): `runner/cli.py lint <project>/manuscript/chapters --profile <genre>` and `runner/cli.py proof <project>/manuscript/chapters`
+- [ ] Em-dash count, Pattern #11 instances, adverb density, sentence-start repetition, filter word count, and typographic defects all within genre target
+- [ ] Any flagged findings fixed before advancing (small, mechanical edits — do not wait for the Evaluator to catch these)
 
-### Phase 3.8 -> 4 (Mechanical Preprocess -> Evaluation)
-- [ ] /mechanical-preprocess ran bash pipeline on chapter:
-  - Em-dash count within genre target (literary <3/page, commercial <2/page)
-  - Pattern #11 instances flagged and fixed
-  - Adverb density checked
-  - Sentence-start repetition checked
-  - Filter word count within limits
-- [ ] Agent reviewed all mechanical diffs for false positives
-
-### Phase 4 -> 4.5 (Evaluation -> Quality Gate)
+### Phase 4 -> 5 (Evaluation -> Revision)
 - [ ] Genesis Score calculated per chapter and globally
 - [ ] Weaknesses ranked by taxonomy (structural > connective > prose > factual)
 - [ ] Top 3 weaknesses identified with text citations
@@ -340,14 +318,18 @@ revision_cycles: 0  # Max 3 per iteration
 - [ ] Character chaos check completed (primary + secondary characters)
 - [ ] Tomorrow Test run (concrete anchors counted)
 
-### Phase 4 -> 4.5 -- CASUAL READER GATE
+### Phase 4 -> 5 -- CASUAL READER GATE
 - [ ] If Casual Reader verdict is "would not keep reading" -> treat as CRITICAL regardless of Genesis Score. The Casual Reader is the single best predictor of commercial success. This overrides everything.
 
-### Phase 4.5 -> 5 (Quality Gate -> Revision)
-- [ ] /quality-gate ran auto-loop (evaluate -> targeted fix -> re-evaluate)
+### Phase 5 (Revision auto-loop)
+There is no separate quality-gate skill to dispatch — you (the orchestrator) run this loop directly:
+1. Read the evaluation. Identify the top weakness.
+2. Dispatch /book-editor with a targeted fix (mode matching the weakness's taxonomy tier).
+3. Re-dispatch /beta-reader to re-evaluate.
+4. Repeat up to 3 iterations per chapter.
 - [ ] Max 3 iterations per chapter
 - [ ] If floor didn't improve after 3 iterations -> escalate to orchestrator as structural issue
-- [ ] Gate threshold met: Floor >= genre threshold (see /quality-gate for genre-specific values: literary 7.5, commercial 7.0, thriller 7.0, memoir 7.5, prescriptive NF 7.0). Recommended >= 8.0 for editorial submission. >= 8.5 for best-seller/award level.
+- [ ] Gate threshold met: Floor >= genre threshold (literary 7.5, commercial 7.0, thriller 7.0, memoir 7.5, prescriptive NF 7.0). Recommended >= 8.0 for editorial submission. >= 8.5 for best-seller/award level.
 
 ### Phase 5 -> 4 (Revision -> Re-evaluation) -- LOOP
 - [ ] Targeted rewrites completed by /book-editor
@@ -368,7 +350,7 @@ revision_cycles: 0  # Max 3 per iteration
 - [ ] World rules: no violations of established rules
 
 ### Phase 5.6 -> 6 (Continuity -> Delivery)
-- [ ] Genesis Score Floor >= genre threshold (see /quality-gate for genre-specific values: literary 7.5, commercial 7.0, thriller 7.0, memoir 7.5, prescriptive NF 7.0). Recommended >= 8.0 for editorial submission. >= 8.5 for best-seller/award level. V3.2 calibration: Genesis Floor does NOT predict sales. Floor 7.0 books sold 62M copies. The floor measures CRAFT, not commercial viability.
+- [ ] Genesis Score Floor >= genre threshold (literary 7.5, commercial 7.0, thriller 7.0, memoir 7.5, prescriptive NF 7.0). Recommended >= 8.0 for editorial submission. >= 8.5 for best-seller/award level. V3.2 calibration: Genesis Floor does NOT predict sales. Floor 7.0 books sold 62M copies. The floor measures CRAFT, not commercial viability.
 - [ ] **CVI-Launch >= 7.0.** If CVI-Launch < 7.0 and Genesis Floor >= 7.5, dispatch targeted pacing/shareability revision before packaging. CVI-Launch formula: Commercial Pacing (20%) + Tomorrow Test (20%) + Casual Reader (20%) + Shareability (20%) + Concept Pitch (10%) + Human Closeness (10%).
 - [ ] **Genesis Score governs REVISION PRIORITY. CVI-Launch governs SUBMISSION READINESS.** When they diverge by 2.0+, report the divergence prominently -- it IS the finding.
 - [ ] No structural weaknesses remaining
@@ -433,19 +415,6 @@ Write to: manuscript/chapters/chapter-[N].md
 Report to: manuscript/chapters/chapter-[N]-report.md
 ```
 
-**Phase 3.5 -- Disruption (after writing, before evaluation):**
-```
-Next step: invoke /chaos-engine
-
-Task: Disrupt chapter [N] of "[title]".
-Project dir: [path]
-Apply >=5 of 8 disruption operations.
-Preserve the emotional anchor: [anchor from outline].
-Read the writer's self-report at manuscript/chapters/chapter-[N]-report.md for context
-on what chaos the writer already included.
-Write disruption report to: evaluations/disruption-chapter-[N].md
-```
-
 **Phase 4 -- Evaluation (NEVER the same context that wrote):**
 ```
 Next step: invoke /beta-reader
@@ -482,18 +451,7 @@ Read ALL chapters sequentially. Check:
 Write to: evaluations/eval-full-manuscript.md
 ```
 
-**Phase 5 -- Revision:**
-```
-Next step: invoke /book-editor
-
-Task: Revise chapter [N] based on evaluation.
-Project dir: [path]
-Read: evaluations/eval-chapter-[N].md for issues AND evaluations/disruption-chapter-[N].md
-for disruption context.
-Do NOT undo disruptions unless the Evaluator specifically flagged them as harmful.
-Fix without degrading identified strengths: [list top 3 strengths].
-Revision type: [structural|connective|prose|factual]
-```
+See the full Phase 5 revision auto-loop template further down (no separate quality-gate dispatch — you run the loop yourself).
 
 **Phase 1.5 -- Reader Personas:**
 ```
@@ -548,30 +506,20 @@ information flow (no character knows things before they're revealed),
 plot thread planning (all threads have planned resolutions).
 ```
 
-**Phase 3.1 -- Dialogue Polish (per chapter):**
+**Phase 3.1 -- Dialogue + Hook Polish (per chapter):**
 ```
-Next step: invoke /dialogue-polish
+Next step: invoke /book-editor
+Mode: connective
 
-Task: Polish dialogue in chapter [N] of "[title]".
+Task: Dialogue and hook/pull pass on chapter [N] of "[title]".
 Project dir: [path]
-Read: manuscript/chapters/chapter-[N].md, voice-dna.md, foundation.md.
-Run cover-the-name test on ALL speaking characters.
-Fix: voice bleeding (characters sounding alike), missing subtext, clean dialogue (#17),
-tag/beat ratio, dialogue-to-prose ratio.
-Do NOT touch narrative prose — dialogue and surrounding mechanics only.
-```
-
-**Phase 3.2 -- Hook Craft (per chapter):**
-```
-Next step: invoke /hook-craft
-
-Task: Evaluate and fix hooks/pulls in chapter [N] of "[title]".
-Project dir: [path]
-Read: manuscript/chapters/chapter-[N].md, outline.md (for next chapter context), voice-dna.md.
-Previous chapter hook type: [type]. DO NOT repeat the same type.
-Score opening (hook) and ending (pull) 1-10.
-If either < 7 (commercial) or < 6 (literary): rewrite the first/last 3-5 sentences.
-Preserve POV character voice from voice-dna.md.
+Read: manuscript/chapters/chapter-[N].md, voice-dna.md, foundation.md, outline.md (next-chapter context).
+Run cover-the-name test on ALL speaking characters. Fix: voice bleeding (characters sounding
+alike), missing subtext, clean dialogue (#17), tag/beat ratio, dialogue-to-prose ratio.
+Previous chapter's hook type: [type]. DO NOT repeat it.
+Score opening (hook) and ending (pull) 1-10. If either < 7 (commercial) or < 6 (literary):
+rewrite the first/last 3-5 sentences.
+Preserve POV character voice from voice-dna.md. Do NOT touch the middle of scenes or add new ones.
 ```
 
 **Phase 3.7 -- Entity Update (per batch):**
@@ -586,33 +534,36 @@ Updates ENTITY_STATE.yaml incrementally with new entity appearances,
 relationship changes, timeline events, and state transitions.
 ```
 
-**Phase 3.8 -- Mechanical Preprocess (per chapter or batch):**
+**Phase 3.8 -- Mechanical Checks (per chapter or batch; code, not a skill dispatch):**
 ```
-Next step: invoke /mechanical-preprocess
+Run directly with the Bash tool — no agent involved, these are deterministic checks:
 
-Task: Mechanical cleanup of chapter [N] (or chapters [range]) of "[title]".
-Project dir: [path]
-Run bash pipeline:
-1. Count and reduce em-dashes (target: <[genre-target] per page)
-2. Grep and flag Pattern #11 (explanatory extensions)
-3. Check adverb density (flag if >2 per page)
-4. Check sentence-start repetition (no 3+ consecutive same-start)
-5. Count filter words (just, really, very, quite, rather, somewhat)
-Agent reviews all changes for false positives before applying.
+python3 runner/cli.py lint  [project]/manuscript/chapters --profile [genre]
+python3 runner/cli.py proof [project]/manuscript/chapters
+
+Read the reports. If either flags a failure (em-dash density, Pattern #11, adverb density,
+sentence-start repetition, filter words, or a typographic defect), fix it directly — these
+are mechanical edits, not judgment calls, so you (the orchestrator) apply them yourself
+rather than dispatching an agent. Re-run to confirm clean before advancing to Phase 4.
 ```
 
-**Phase 4.5 -- Quality Gate (auto-loop):**
+**Phase 5 -- Revision auto-loop (you run this directly; there is no /quality-gate skill):**
 ```
-Next step: invoke /quality-gate
-
-Task: Quality gate loop for chapter [N] of "[title]".
-Project dir: [path]
-Threshold: Floor >= genre threshold (see /quality-gate for genre-specific values: literary 7.5, commercial 7.0, thriller 7.0, memoir 7.5, prescriptive NF 7.0). Recommended >= 8.0 for editorial submission. >= 8.5 for best-seller/award level.
+Threshold: Floor >= genre threshold (literary 7.5, commercial 7.0, thriller 7.0, memoir 7.5,
+prescriptive NF 7.0). Recommended >= 8.0 for editorial submission. >= 8.5 for best-seller/award level.
 Max iterations: 3
-Loop: evaluate chapter -> identify top weakness -> dispatch targeted fix -> re-evaluate
-If threshold met: PASS, advance to Phase 5.
-If 3 iterations without meeting threshold: ESCALATE to orchestrator.
-Preserve strengths: [list from evaluation]
+
+Loop, for each chapter below threshold:
+1. Identify the top weakness from the evaluation (structural > connective > prose > factual).
+2. Next step: invoke /book-editor
+   Task: Revise chapter [N] based on evaluation.
+   Project dir: [path]
+   Read: evaluations/eval-chapter-[N].md for issues.
+   Fix without degrading identified strengths: [list top 3 strengths].
+   Revision type: [structural|connective|prose-texture|factual]
+3. Next step: invoke /beta-reader to re-evaluate the revised chapter.
+4. If threshold met: PASS, advance to Phase 5.5.
+   If 3 iterations without meeting threshold: log to escalated chapters, continue — do not block the pipeline on one chapter.
 ```
 
 **Phase 5.5 -- Entity Update (post-revision):**
@@ -899,7 +850,7 @@ Isolated errors that don't affect anything around them.
 
 ## THE 20 ANTI-AI PATTERNS
 
-You track these. The evaluator scans for them. The disruptor breaks them. The writer avoids them. You enforce the targets.
+You track these. The evaluator scans for them, `runner/cli.py lint` catches the mechanical ones automatically, and the writer avoids them at the source. You enforce the targets.
 
 **Genre-Adjusted Targets (from 10-bestseller benchmark):**
 
@@ -944,7 +895,6 @@ You track these. The evaluator scans for them. The disruptor breaks them. The wr
 - `/book status` -- Current state: phase, chapter progress, scores, next recommended action
 - `/book phase [N]` -- Force-advance to phase N (with gate check -- will refuse if gate not met)
 - `/book write [chapter N]` -- Prepare dispatch for /prose-craft for specific chapter
-- `/book disrupt [chapter N]` -- Prepare dispatch for /chaos-engine
 - `/book evaluate [chapter N | all]` -- Prepare dispatch for /beta-reader
 - `/book revise [chapter N]` -- Prepare dispatch for /book-editor
 - `/book score` -- Current Genesis Score breakdown + CVI-Launch + CVI-Legacy
@@ -954,10 +904,10 @@ You track these. The evaluator scans for them. The disruptor breaks them. The wr
 - `/book voice-dna` -- Generate or regenerate Voice DNA document
 - `/book personas` -- Generate or regenerate reader personas
 - `/book continuity [outline|manuscript]` -- Run continuity audit (outline or full manuscript)
-- `/book dialogue [chapter N]` -- Run dialogue polish on chapter
-- `/book hooks [chapter N | binge]` -- Evaluate/fix hooks and pulls (or run binge test on all)
-- `/book preprocess [chapter N | all]` -- Run mechanical preprocessing pipeline
-- `/book gate [chapter N]` -- Run quality gate auto-loop on chapter
+- `/book dialogue [chapter N]` -- Prepare /book-editor `connective` dispatch for dialogue polish on chapter
+- `/book hooks [chapter N | binge]` -- Prepare /book-editor `connective` dispatch for hook/pull scoring (or run binge test on all)
+- `/book preprocess [chapter N | all]` -- Run `runner/cli.py lint` + `proof` directly (Bash, not a skill)
+- `/book gate [chapter N]` -- Run the Phase 5 revision auto-loop on chapter (evaluate -> fix -> re-evaluate)
 - `/book patterns` -- Show systemic AI patterns tracked across chapters
 - `/book oscillation` -- Show emotional oscillation analysis
 
@@ -975,16 +925,15 @@ You track these. The evaluator scans for them. The disruptor breaks them. The wr
     +-- /entity-tracker          -> Phase 2.7 + 3.7 + 5.5 (BUILD + UPDATE entity state)
     +-- /continuity-guardian     -> Phase 2.8 + 5.6 (outline check + full manuscript check)
     +-- /prose-craft             -> Phase 3   (writes chapters with voice inhabitation, anti-AI, chaos)
-    +-- /dialogue-polish         -> Phase 3.1 (cover-the-name test, subtext, voice consistency in dialogue)
-    +-- /hook-craft              -> Phase 3.2 (chapter openings + endings, binge test)
-    +-- /chaos-engine            -> Phase 3.5 (breaks predictability, injects human noise)
-    +-- /mechanical-preprocess   -> Phase 3.8 (bash pipeline: em-dashes, Pattern #11, adverbs, repetition)
+    +-- /book-editor             -> Phase 3.1 (dialogue + hook polish, mode: connective)
+    +-- runner/cli.py lint+proof -> Phase 3.8 (code, not a skill: em-dashes, Pattern #11, adverbs, repetition, typography)
     +-- /beta-reader             -> Phase 4   (5 readers, Genesis Score, anti-AI scan, Tomorrow Test)
-    +-- /quality-gate            -> Phase 4.5 (auto-loop: eval->fix->re-eval, max 3 iterations)
-    +-- /book-editor             -> Phase 5   (targeted revision by taxonomy)
+    +-- /book-editor             -> Phase 5   (targeted revision by taxonomy; auto-loop run by you, no separate gate skill)
     +-- /editorial-package       -> Phase 6   (logline, synopsis, query, cover brief)
     +-- /production-prep         -> Phase 6   (proofreading, ebook/print formatting)
 ```
+
+`chaos-engine`, `quality-gate`, `dialogue-polish`, and `hook-craft` are retired from this pipeline — see "Post-V6 Recalibration" at the top of this file.
 
 ---
 
