@@ -35,11 +35,9 @@ The 11 agents in this pipeline (these are the ONLY valid `subagent_type` values)
 | `entity-tracker` | Canonical state keeper → `ENTITY_STATE.yaml` (modes: BUILD, UPDATE) |
 | `continuity-guardian` | Continuity auditor (modes: OUTLINE AUDIT, MANUSCRIPT AUDIT) — flags, never fixes |
 | `book-writer` | Writes one chapter at a time |
-| `dialogue-polish` | Surgical dialogue pass (cover-the-name test) |
-| `hook-craft` | Chapter opening (hook) + ending (pull) surgery |
 | `book-disruptor` | Anti-AI disruption pass |
 | `book-evaluator` | Genesis Score, CVI, reader simulation, anti-AI scan |
-| `book-editor` | Targeted revision based on evaluation/continuity findings |
+| `book-editor` | Targeted revision based on evaluation/continuity findings; also runs the per-chapter dialogue + hook/pull pass (mode: connective — cover-the-name test, subtext repair, hook/pull scoring) |
 | `book-packager` | Editorial package + production prep (delivery) |
 
 Do NOT use slash-command syntax (`/agent-name`). Do NOT invent names. If you cannot resolve a `subagent_type`, that is a bug — stop and report it rather than guessing.
@@ -74,8 +72,7 @@ PHASE 2.7:  ENTITY BUILD                 → entity-tracker      (BUILD)
 PHASE 2.8:  CONTINUITY (outline)         → continuity-guardian (OUTLINE AUDIT)
 PHASE 3:    THE CHAPTER LOOP — per chapter, SEQUENTIAL:
             Step A  WRITE                → book-writer
-            Step B  DIALOGUE POLISH      → dialogue-polish
-            Step C  HOOK CRAFT           → hook-craft
+            Step B  DIALOGUE + HOOK      → book-editor (mode: connective)
             Step D  DISRUPTION           → book-disruptor
             Step D.5 ENTITY UPDATE       → entity-tracker      (UPDATE, every 3-5 ch)
             Step E  MECH PREPROCESS      → bash (no agent)
@@ -96,13 +93,13 @@ PHASE 6:    DELIVERY                     → book-packager
 
 This pipeline is **mostly sequential by necessity**, because of a hard continuity dependency:
 
-> **The chapter loop is SEQUENTIAL.** Chapter N+1's `book-writer` reads the *finalized* `chapter-{N}.md` for continuity. But chapter N is still mutated by Step B (dialogue), Step C (hook), Step D (disruption), and possibly Step G (editor fixes) **after** it's first written. If you start chapter N+1 before chapter N is finalized, N+1 builds on a version of N that no longer exists. That is the race that corrupts continuity.
+> **The chapter loop is SEQUENTIAL.** Chapter N+1's `book-writer` reads the *finalized* `chapter-{N}.md` for continuity. But chapter N is still mutated by Step B (dialogue + hook), Step D (disruption), and possibly Step G (editor fixes) **after** it's first written. If you start chapter N+1 before chapter N is finalized, N+1 builds on a version of N that no longer exists. That is the race that corrupts continuity.
 >
 > **Rule:** Do NOT begin chapter N+1's Step A until chapter N has cleared its Quality Gate (Step G). Process chapters one at a time, in order.
 
 What you CAN parallelize / batch safely:
 - The upfront chain still has hard ordering: research → premise forge → foundation → voice DNA → entity build → outline continuity. Do not parallelize these; each consumes the previous one's output.
-- Within a single chapter, Steps B and C are fast and run back-to-back (B then C); they do not overlap because both edit the same file.
+- Within a single chapter, Step B (dialogue + hook, via `book-editor` connective mode) is a single fast pass over the chapter file.
 - `entity-tracker` UPDATE (Step D.5) is batched every 3-5 chapters rather than run every chapter.
 - The bash mechanical preprocess (Step E) is local and instant.
 - Every ~3 chapters, run a quick continuity spot-check (grep names/dates/descriptions across recent chapters) without a full agent dispatch.
@@ -222,7 +219,7 @@ Produce {path}/voice-dna.md with all five sections:
 3. Voice differentiation matrix (cover-the-name pre-solved; min 3 distinguishing markers per character pair)
 4. Anti-pattern budget, genre-adjusted (Pattern #11 ceiling per 1K words: literary ≤3 / commercial ≤4 / thriller ≤6 / other ≤8; adverbs-in-tags near-zero; 'as if' ceiling; metacognitive ceiling; emotional-temperature ceiling — what the Writer aims under and the Disruptor cuts down to)
 5. Benchmark samples
-This document is PRESCRIPTIVE and EXECUTABLE — the Writer, dialogue-polish, and Evaluator all follow it.
+This document is PRESCRIPTIVE and EXECUTABLE — the Writer, book-editor (connective mode), and Evaluator all follow it.
 Write to: {path}/voice-dna.md"
 ```
 
@@ -282,28 +279,19 @@ Write to: {path}/manuscript/chapters/chapter-{N}.md
 Write self-report to: {path}/manuscript/chapters/chapter-{N}-report.md"
 ```
 
-**Step B — Dialogue Polish:**
+**Step B — Dialogue + Hook Polish:**
 ```
-Dispatch: dialogue-polish
-Prompt: "Dialogue-only editing pass on chapter {N} of '{title}'.
+Dispatch: book-editor
+Mode: connective
+Prompt: "Dialogue and hook/pull pass on chapter {N} of '{title}'.
 Project dir: {path}
-Read: {path}/manuscript/chapters/chapter-{N}.md, {path}/voice-dna.md (character voice cards), {path}/ENTITY_STATE.yaml.
-Run the cover-the-name test on ALL speaking characters.
-Fix: voice bleeding, missing subtext, thesaurus tags / tag-adverbs, tag/beat ratio, filler.
-Light naturalism only — leave heavy mess to the Disruptor. Touch ONLY dialogue + its immediate mechanics; never narrative prose. Introduce no continuity contradiction.
-Edit the chapter file in place. Report to {path}/evaluations/dialogue-chapter-{N}.md"
-```
+Read: {path}/manuscript/chapters/chapter-{N}.md, {path}/voice-dna.md (character voice cards), {path}/foundation.md, {path}/outline.md (next-chapter context), {path}/ENTITY_STATE.yaml.
 
-**Step C — Hook Craft:**
-```
-Dispatch: hook-craft
-Prompt: "Hook/pull pass on chapter {N} of '{title}'.
-Project dir: {path}
-Read: {path}/manuscript/chapters/chapter-{N}.md, {path}/outline.md (next-chapter context), {path}/voice-dna.md, {path}/ENTITY_STATE.yaml.
-Previous chapter's hook type: {prev_hook_type}. Do NOT repeat it.
-Score opening (hook) and ending (pull) 1-10. Rewrite ONLY first/last 3-5 sentences when below genre floor (thriller/commercial/YA/romance 7; literary 6; memoir/narrative NF 6.5; prescriptive NF 7).
-Ch1: respect foundation.md OPENING STRATEGY. Final chapter: carry EMOTIONAL RESIDUE — resonance, NOT a cliffhanger.
-Preserve POV voice and facts. Edit in place. Report to {path}/evaluations/hook-chapter-{N}.md"
+Dialogue: Run the cover-the-name test on ALL speaking characters. Fix: voice bleeding, missing subtext, thesaurus tags / tag-adverbs, tag/beat ratio, filler. Light naturalism only — leave heavy mess to the Disruptor. Touch ONLY dialogue + its immediate mechanics; never narrative prose. Introduce no continuity contradiction.
+
+Hook/pull: Previous chapter's hook type: {prev_hook_type}. Do NOT repeat it. Score opening (hook) and ending (pull) 1-10. Rewrite ONLY first/last 3-5 sentences when below genre floor (thriller/commercial/YA/romance 7; literary 6; memoir/narrative NF 6.5; prescriptive NF 7). Ch1: respect foundation.md OPENING STRATEGY. Final chapter: carry EMOTIONAL RESIDUE — resonance, NOT a cliffhanger. Preserve POV voice and facts.
+
+Edit the chapter file in place. Report to {path}/evaluations/connective-chapter-{N}.md"
 ```
 
 **Step D — Disruption:**
