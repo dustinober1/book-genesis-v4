@@ -47,11 +47,13 @@ This framework does NOT evaluate (flag as OUT OF SCOPE and decline to score):
 9. **Read any prior evaluations** — To track improvement (or regression)
 10. **Read the disruption report** if one exists — To verify disruptions enhanced rather than damaged
 
-## GENESIS SCORE — 10 DIMENSIONS
+## GENESIS SCORE — 10 GATED DIMENSIONS + 1 INFORMATIONAL
 
-**The dimension list, weights, floor/average calculation, and approval gate are defined once, canonically, in `skills/book-genesis-codex/references/scoring/genesis-score-codex.md`.** This section supplies genre-calibrated *qualitative* scoring guidance for those same 10 dimensions — it is not a competing rubric. If the canonical file and this section ever disagree on a threshold or gate value, the canonical file wins; fix this file instead of scoring against the stale number.
+**The dimension list, weights, floor/average calculation, and approval gate are defined once, canonically, in `skills/book-genesis-codex/references/scoring/genesis-score-codex.md`.** This section supplies genre-calibrated *qualitative* scoring guidance for those same dimensions — it is not a competing rubric. If the canonical file and this section ever disagree on a threshold or gate value, the canonical file wins; fix this file instead of scoring against the stale number.
 
-The canonical 10 dimensions: Originality, Theme, Characters, Prose, Pacing, Emotion, Coherence, Market, Voice, Opening. Score each from 6.0 to 10.0; the floor is the score. Six of the ten (Originality, Theme, Characters, Emotion, plus Prose and Pacing) have detailed genre-calibrated guidance directly below. **Voice** and **Coherence** were folded into the old "Prose & Voice" and "Pacing & Coherence" combined dimensions below — score them separately using the same guidance, applied to voice-distinctiveness and internal-logic/continuity respectively. **Market** draws on the CVI section further down (comp clarity, audience legibility, packaging viability — not the full commercial index, just the craft-facing slice of it). **Opening** draws on the Discovery Test and Tomorrow Test below (first-page grip, first-chapter promise, and whether the ending actually pays it off).
+The canonical 10 GATED dimensions (count toward Floor, Average, and the Approval Gate): Originality, Theme, Characters, Prose, Pacing, Emotion, Coherence, Market, Voice, Opening. Score each from 6.0 to 10.0; the floor is the score. Six of the ten (Originality, Theme, Characters, Emotion, plus Prose and Pacing) have detailed genre-calibrated guidance directly below. **Voice** and **Coherence** were folded into the old "Prose & Voice" and "Pacing & Coherence" combined dimensions below — score them separately using the same guidance, applied to voice-distinctiveness and internal-logic/continuity respectively. **Market** draws on the CVI section further down (comp clarity, audience legibility, packaging viability — not the full commercial index, just the craft-facing slice of it). **Opening** draws on the Discovery Test and Tomorrow Test below (first-page grip, first-chapter promise, and whether the ending actually pays it off).
+
+Plus an 11th dimension, **Risk**, which is scored and reported but never gated — see the canonical file's "Why Risk Is Not Gated" for the reasoning and Dimension 11 below for scoring guidance. Do not fold a low Risk score into the Floor, the Average, or any revision-priority ranking that treats gated dimensions and Risk as interchangeable — Risk failing costs the manuscript nothing on its own; a gated dimension damaged BY a risk that didn't land is what costs something, and that damage is scored on its own dimension, not on Risk.
 
 ### Dimension 1: ORIGINALITY (V3.4: Genre-Adjusted)
 **Genre profiles for originality (from outlier benchmark — Fifty Shades, Alchemist, Gone Girl, Dune, It Ends with Us):**
@@ -161,6 +163,18 @@ Score comp clarity, audience legibility, and packaging viability — the craft-f
 ### Dimension 10: OPENING
 
 Score first-page grip, first-chapter promise, and whether the ending ultimately pays that promise off. Use the Discovery Test (below, Chapter 1 only) and the Tomorrow Test as direct evidence for this dimension rather than re-deriving separate criteria. An opening that hooks but whose ending doesn't honor the promise caps at 7.5 — Opening is scored on the full arc, not the first page alone.
+
+### Dimension 11: RISK (informational — never gated, see canonical file)
+
+The other ten dimensions, gated by three simultaneous minimums (Floor >= 8.5, Average >= 9.0, no dimension < 8.0), mechanically select for the manuscript with no weak dimension — which is also the manuscript with nothing pushed hard enough to risk becoming one. This dimension exists to surface that failure mode, which the other ten cannot see by design: a chapter can be flawless on every gated axis and still be safe.
+
+Look for evidence of a genuine bet: a refused payoff, a protagonist decision the text does not redeem, a formal device (an unreliable narrator, a structural repetition, a POV restriction) sustained past the point of convenience, a scene that serves nothing but itself and earns its place anyway, a chapter that could plausibly have scored lower than it did because it tried something.
+
+- **No identifiable risk** — score 6.0, say so plainly ("competent, no identifiable risk taken"). This is not a penalty on the chapter's other dimensions; a book with no reason to gamble is not thereby a worse book. It is information for the human at CHECKPOINT 2, not a verdict.
+- **A risk that landed** — score 8.0-9.5 with the specific bet named as evidence.
+- **A risk that did NOT land** — still score 7.0+ here (the bet happened; that is what this dimension measures), but score the GATED dimension the failure actually damaged (Coherence for a structural gamble that confused the timeline, Emotion for a refused payoff that just reads as withholding) honestly and separately. Do not let a bold Risk score excuse a real Coherence or Emotion problem, and do not let a Coherence penalty suppress the Risk score for the same passage — they are answering different questions.
+
+Report Risk in the Dimension Scores table, visibly marked "(informational, not gated)," with its own evidence line. It never moves the Floor, the Average, or the Gate Verdict, and it is never a target for the polish loop in Step G of the orchestrator — a chapter is never sent back for a low Risk score.
 
 ## ANTI-AI SCAN — 20 PATTERNS
 
@@ -504,6 +518,7 @@ Write to `evaluations/eval-chapter-[N].md`:
 | Opening | X.X | "[quote]" (location) | |
 | **FLOOR** | **X.X** | | |
 | **AVERAGE** (weighted per genesis-score-codex.md) | **X.X** | | |
+| Risk *(informational, not gated)* | X.X | "[the specific bet]" (location) | |
 
 ## CVI-Launch Breakdown (Commercial Assessment)
 | Input | Score | Evidence |
@@ -557,7 +572,7 @@ Write to `evaluations/eval-chapter-[N].md`:
 ## Strengths to PRESERVE
 
 ## PATH TO 8.5 (MANDATORY whenever Genesis Floor < 8.5)
-For EACH dimension currently holding the floor below 8.5, write an executable work order:
+For EACH of the 10 GATED dimensions currently holding the floor below 8.5, write an executable work order. Risk is never part of this section — it has no floor to hold down; a low Risk score never generates a work order here.
 - **[Dimension] X.X → 8.5 requires:** [the specific missing element, stated in this evaluator's own unlock terms — e.g. Prose: a citable close-book sentence (thriller variant: an unputdownable propulsion run); Characters: chaos INHABITED not mediated; Originality: a structural subversion of the genre-standard beat (refused payoff, inverted actor, relocated weight); Momentum: the final page loading a sharper question than the one resolved; Emotion: the peak carried by objects/actions with zero intensity-words.] Name the EXACT scene/passage where the lift is most achievable and what surgery to perform there.
 Vague = useless. This section is the editor's work order — each item must be executable without re-deriving your analysis.
 

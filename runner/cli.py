@@ -21,7 +21,7 @@ from runner.filesystem import (  # noqa: E402
     state_set,
     validate_project,
 )
-from runner.gates import evaluate_gate, render_gate_report, write_gate_report  # noqa: E402
+from runner.gates import evaluate_gate, render_gate_report, run_check, write_gate_report  # noqa: E402
 from runner.lint import lint_manuscript, render_report  # noqa: E402
 from runner.styleprofile import (  # noqa: E402
     STYLE_PROFILE_FILENAME, render_style_profile, resolve_thresholds,
@@ -39,7 +39,7 @@ from runner.fingerprint import (  # noqa: E402
 from runner.humanpass import (  # noqa: E402
     apply_plan, build_plan, render_apply_result, render_plan, status_manuscript,
 )
-from runner.ledger import build_ledger, render_ledger  # noqa: E402
+from runner.ledger import MOTIF_BANK_NAME, build_ledger, render_ledger  # noqa: E402
 from runner.macro import macro_manuscript, render_macro_report  # noqa: E402
 from runner.proof import proof_manuscript, render_proof_report  # noqa: E402
 from runner.texture import render_texture_report, texture_manuscript  # noqa: E402
@@ -193,6 +193,14 @@ def build_parser() -> argparse.ArgumentParser:
     gate_parser.add_argument("--phase", default="", help="Phase label to evaluate (default: current phase)")
     gate_parser.add_argument("--out", default="", help="Write the report to this path (default: work/gate-report.md)")
     gate_parser.add_argument("--json", action="store_true", help="Print a JSON verdict instead of Markdown")
+
+    check_parser = subparsers.add_parser(
+        "check", help="Run one gates.CHECK_REGISTRY check standalone, without a manifest/phase. "
+                       "For pipelines (e.g. book-orchestrator.md) that dispatch individual checks "
+                       "directly instead of going through the codex manifest's `gate` command.")
+    check_parser.add_argument("token", help="Check name, optionally with positional args: "
+                                             "'lint', 'structure_variety', 'dynamic_range:0.01', 'wordcount:0.85:1.25'")
+    check_parser.add_argument("path")
 
     event_parser = subparsers.add_parser(
         "apply-event", help="Guarded, validated write to STATE.yaml (book-genesis-full schema)")
@@ -353,15 +361,18 @@ def main(argv: list[str] | None = None) -> int:
         if not chapters.is_dir():
             print(f"No chapters directory at {chapters}")
             return 2
+        project_root = target.parent.parent if target.name == "chapters" else target
+        # foundation/motifs.md is an optional overlay, same contract as
+        # research/texture-bank.md -- absent is the normal case, a no-op.
+        motif_bank_path = project_root / MOTIF_BANK_NAME
         # The self-report for chapter-N.md (chapter-N-report.md) is written
         # to the same directory as the chapter itself -- always true of the
         # chapters dir regardless of which form `target` was given as.
-        report = build_ledger(chapters, report_dir=chapters)
+        report = build_ledger(chapters, report_dir=chapters, motif_bank_path=motif_bank_path)
         text = render_ledger(report)
         if args.out:
             out_path = Path(args.out)
         else:
-            project_root = target.parent.parent if target.name == "chapters" else target
             out_path = project_root / "work" / "retired.md"
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(text, encoding="utf-8")
@@ -556,6 +567,17 @@ def main(argv: list[str] | None = None) -> int:
             print(render_gate_report(verdict))
             print(f"\nReport written to {report_path}")
         return 0 if verdict.ok else 1
+
+    if args.command == "check":
+        result = run_check(target, args.token)
+        marker = " (advisory)" if result.advisory else ""
+        print(f"{result.name}: {result.status.upper()}{marker} -- {result.summary}")
+        if result.detail:
+            print()
+            print(result.detail)
+        if result.status in ("fail", "error") and not result.advisory:
+            return 1
+        return 0
 
     if args.command == "apply-event":
         def _split_kv(items: list[str]) -> list[tuple[str, str]]:

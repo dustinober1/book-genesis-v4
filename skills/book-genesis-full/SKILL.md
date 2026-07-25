@@ -13,9 +13,10 @@ This file predates two later benchmark-driven changes to this repo and has been 
 
 - **Chaos-engine (old Phase 3.5) and quality-gate (old Phase 4.5) are gone, not just renamed.** An internal benchmark found the full skill-heavy pipeline scored 7.4 externally vs. 8.2 for the leaner core (`docs/superpowers/plans` history, commit `23884fc`) — chaos-engine specifically was found to add noise that made prose worse, and quality-gate's isolated per-chapter loop is now handled inline in Phase 5 instead. Do not dispatch to either skill; they live in `skills/deprecated/` as historical reference only.
 - **Dialogue-polish and hook-craft are gone as standalone skills.** Their techniques (cover-the-name test, subtext repair, hook/pull scoring) were merged into `book-editor` — see its "Handling Specific Evaluation Issues" section. Dispatch `/book-editor` for chapter-level dialogue and hook fixes instead.
-- **Mechanical preprocessing is now code, not a skill dispatch.** `runner/cli.py lint` and `runner/cli.py proof` run the em-dash/adverb/Pattern-11/filter-word/typographic checks deterministically — no agent judgment call needed, so there's no "skill count" cost. Run them directly with the Bash tool; see Phase 3.8 below. If you installed via `install.sh`/`install.ps1`, the runner lives at `~/.claude/book-genesis-runner/runner/cli.py` (see `docs/runner.md`) rather than a repo-relative path — resolve the actual path before running it.
+- **Mechanical preprocessing is now code, not a skill dispatch.** `runner/cli.py lint` and `runner/cli.py proof` run the em-dash/adverb/Pattern-11 (`explanatory_extension`)/filter-word (`filter_word_density`)/typographic checks deterministically — no agent judgment call needed, so there's no "skill count" cost. Run them directly with the Bash tool; see Phase 3.8 below. If you installed via `install.sh`/`install.ps1`, the runner lives at `~/.claude/book-genesis-runner/runner/cli.py` (see `docs/runner.md`) rather than a repo-relative path — resolve the actual path before running it.
 - **Voice-fingerprint, reader-persona, entity-tracker, and continuity-guardian are unaffected** — those are real, installed skills (`skills/optional/`), not deprecated. Keep dispatching to them as documented.
 - **STATE.yaml is no longer hand-edited.** Every write to canonical project state goes through `runner/cli.py apply-event` (see "STATE TRANSACTIONS" below). This closes a real gap: an orchestrator hand-editing STATE.yaml directly has no protection against a stale read clobbering progress, no audit trail, and no atomic Git checkpoint. If you are reading an older copy of this file that shows STATE.yaml being edited with the Edit tool, that is now wrong — use `apply-event` instead.
+- **Phase 3 (Writing) dispatches the `book-writer` AGENT, not the `/prose-craft` SKILL.** Every other phase in this pipeline invokes a skill via the `/skill-name` convention, staying in your current session. Phase 3 is the one exception: it needs `agents/book-writer.md`'s full drafting contract (voice-inhabitation freewrite, character chaos, structural-diversity tracking, the mandatory ugly sentence, the impulse instruction) — machinery that lives in that agent file, not in `skills/prose-craft/SKILL.md`, which is a REVIEW skill for prose already on the page (see its own "COMO USAR": every use case there takes existing text as input). If you are reading an older copy of this file that routes Phase 3 through `/prose-craft`, that was always a mismatch — `/prose-craft` cannot originate a chapter, only revise one — and this file's "Task: Write chapter [N]..." block under Phase 3 below was already carrying book-writer.md's instructions inline regardless of which name the "invoke" line used. Dispatch it as a genuine subagent via the Agent tool, the same way `book-orchestrator.md` dispatches every specialist agent, and pass it the Task block below as its prompt.
 
 ## YOUR ROLE
 
@@ -82,7 +83,7 @@ PHASE 2:   FOUNDATION         -> /narrative-foundation
 PHASE 2.5: VOICE DNA          -> /voice-fingerprint
 PHASE 2.7: ENTITY TRACKING    -> /entity-tracker (BUILD)
 PHASE 2.8: CONTINUITY (outline) -> /continuity-guardian (batch: outline + foundation)
-PHASE 3:   WRITING            -> /prose-craft (one chapter at a time)
+PHASE 3:   WRITING            -> book-writer (agent — see "PHASE 3 DISPATCHES A REAL SUBAGENT" below; NOT a /skill invocation like every other phase in this list)
 PHASE 3.1: DIALOGUE + HOOK POLISH -> /book-editor (mode: connective; cover-the-name test + hook/pull scoring)
 PHASE 3.7: ENTITY UPDATE      -> /entity-tracker (UPDATE)
 PHASE 3.8: MECHANICAL CHECKS  -> runner/cli.py lint + proof (code, not a skill dispatch; before eval)
@@ -388,7 +389,7 @@ Evaluator output (`evaluations/`), the writer's self-reports, and any intermedia
 - [ ] All WARNING findings logged and addressed or deferred with rationale
 
 ### Phase 3 -> 3.1 (Writing -> Dialogue + Hook Polish)
-- [ ] Chapter written by /prose-craft
+- [ ] Chapter written by the book-writer agent (dispatched via the Agent tool — see POST-V6 RECALIBRATION above)
 - [ ] Writer's self-report saved (chapter-[N]-report.md) with chaos moments, ugly sentence, impulse deviations, anti-AI scan results, structural approach used
 - [ ] No entry in `project.content_boundaries` is crossed in this chapter's text (hard gate — do not advance on a violation, send back to the Writer)
 
@@ -496,7 +497,10 @@ voice-under-pressure definition, theme as question, re-read architecture, cultur
 
 **Phase 3 -- Writing (one chapter at a time):**
 ```
-Next step: invoke /prose-craft
+Next step: dispatch the book-writer agent (agents/book-writer.md) via the Agent tool.
+This is the one phase in this pipeline that spawns a genuine subagent instead of
+invoking a skill in the current session -- see POST-V6 RECALIBRATION above. Pass
+everything below as the dispatch prompt.
 
 Task: Write chapter [N] of "[title]".
 Project dir: [path]
@@ -1018,7 +1022,7 @@ You track these. The evaluator scans for them, `runner/cli.py lint` catches the 
 - `/book start [idea]` -- Initialize project, create directory structure, run Phase 1
 - `/book status` -- Current state: phase, chapter progress, scores, next recommended action
 - `/book phase [N]` -- Force-advance to phase N (with gate check -- will refuse if gate not met)
-- `/book write [chapter N]` -- Prepare dispatch for /prose-craft for specific chapter
+- `/book write [chapter N]` -- Prepare an Agent-tool dispatch of the book-writer agent for specific chapter
 - `/book evaluate [chapter N | all]` -- Prepare dispatch for /beta-reader
 - `/book revise [chapter N]` -- Prepare dispatch for /book-editor
 - `/book score` -- Current Genesis Score breakdown + CVI-Launch + CVI-Legacy
@@ -1067,7 +1071,7 @@ This copies `.md`/`.txt` chapter files into `manuscript/chapters/`, verifying ea
     +-- /voice-fingerprint       -> Phase 2.5 (voice DNA: per-character voice cards, differentiation matrix)
     +-- /entity-tracker          -> Phase 2.7 + 3.7 + 5.5 (BUILD + UPDATE entity state)
     +-- /continuity-guardian     -> Phase 2.8 + 5.6 (outline check + full manuscript check)
-    +-- /prose-craft             -> Phase 3   (writes chapters with voice inhabitation, anti-AI, chaos)
+    +-- book-writer (agent)      -> Phase 3   (writes chapters with voice inhabitation, anti-AI, chaos — dispatched via the Agent tool, not a /skill)
     +-- /book-editor             -> Phase 3.1 (dialogue + hook polish, mode: connective)
     +-- runner/cli.py lint+proof -> Phase 3.8 (code, not a skill: em-dashes, Pattern #11, adverbs, repetition, typography)
     +-- /beta-reader             -> Phase 4   (5 readers, Genesis Score, anti-AI scan, Tomorrow Test)

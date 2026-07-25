@@ -43,6 +43,7 @@ phase_3_drafting:
     - "voice_lexicon"
     - "chapter_order"
     - "wordcount:0.85:1.25"
+    - "structure_variety"
   next: "Phase 4: Adversarial Audit"
 
 phase_4_adversarial_audit:
@@ -59,6 +60,8 @@ phase_4_adversarial_audit:
     - "voice_lexicon"
     - "chapter_order"
     - "wordcount:0.85:1.25"
+    - "structure_variety"
+    - "dynamic_range"
   next: "Phase 5: Final Score"
 
 phase_5_final_score:

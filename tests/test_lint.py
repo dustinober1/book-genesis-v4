@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import sys
 import tempfile
+from typing import List
 import unittest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -46,6 +47,22 @@ from runner.discover import (  # noqa: E402
 
 def _findings(report, check):
     return [f for f in report.findings if f.check == check]
+
+
+def _words_with_dashes(word_count: int, dash_count: int) -> str:
+    """Exactly `word_count` words with exactly `dash_count` standalone em
+    dashes spaced evenly through them -- an em dash is not itself a word
+    (WORD in lint.py/discover.py doesn't match `—`), so this gives a
+    precise, reproducible density instead of an approximate one."""
+    tokens: List[str] = []
+    inserted = 0
+    step = max(word_count // max(dash_count, 1), 1)
+    for i in range(word_count):
+        tokens.append("step")
+        if inserted < dash_count and (i + 1) % step == 0:
+            tokens.append("—")
+            inserted += 1
+    return " ".join(tokens) + "."
 
 
 class LintTests(unittest.TestCase):
@@ -279,6 +296,83 @@ class LintTests(unittest.TestCase):
         report = lint_manuscript(self.chapters)
         found = _findings(report, "adverb_density")
         self.assertTrue(found, "expected adverb density warning")
+
+    def test_filter_word_density_flagged(self) -> None:
+        body = (
+            "She saw the door open. She heard the wind rise. She felt the cold. "
+            "She noticed the lamp go out. She realized the house was empty. "
+        ) * 15
+        self._write("ch01.md", body)
+        report = lint_manuscript(self.chapters)
+        found = _findings(report, "filter_word_density")
+        self.assertTrue(found, "expected filter word density warning")
+        self.assertEqual("warn", found[0].severity)
+
+    def test_filter_word_clean_prose_not_flagged(self) -> None:
+        body = " ".join(
+            f"She set the bread on the table and counted the jars in row {i}."
+            for i in range(80)
+        )
+        self._write("ch01.md", body)
+        report = lint_manuscript(self.chapters)
+        self.assertEqual([], _findings(report, "filter_word_density"))
+
+    def test_filter_word_lowercase_common_word_not_false_positive(self) -> None:
+        # A case-insensitive [A-Z] class would match "the felt", "and knew" --
+        # any ordinary lowercase word before one of these common verbs. The
+        # subject branch must require an actual capital letter.
+        body = "the felt hat sat on the table and knew nothing of the plan. " * 20
+        self._write("ch01.md", body)
+        report = lint_manuscript(self.chapters)
+        self.assertEqual([], _findings(report, "filter_word_density"))
+
+    def test_em_dash_density_local_flags_single_hot_chapter(self) -> None:
+        # ch01: 1000 words, 20 em dashes -> 20/1k, well above both the
+        # manuscript-wide (4.0/1k) and local (6.0/1k) thresholds on its own.
+        hot = _words_with_dashes(1000, 20)
+        # 10 clean chapters, 0 dashes, 1000 words each.
+        clean = _words_with_dashes(1000, 0)
+        self._write("ch01.md", hot)
+        for i in range(2, 12):
+            self._write(f"ch{i:02d}.md", clean)
+        report = lint_manuscript(self.chapters)
+        # Manuscript-wide average: 20 dashes / 11000 words = ~1.8/1k --
+        # comfortably under the 4.0/1k manuscript-wide threshold, so the
+        # whole-book average hides the one hot chapter.
+        self.assertEqual([], _findings(report, "em_dash_density"))
+        found = _findings(report, "em_dash_density_local")
+        self.assertTrue(found, "expected a single-chapter em dash flag")
+        self.assertIn("ch01.md", found[0].measured)
+
+    def test_em_dash_density_local_not_flagged_when_evenly_distributed(self) -> None:
+        # Every chapter at a uniform 5.0/1k: above the manuscript-wide
+        # threshold (4.0/1k, so em_dash_density itself still fires) but
+        # below the local multiplier's 6.0/1k ceiling, so no chapter is
+        # flagged individually for running hotter than its siblings.
+        even = _words_with_dashes(1000, 5)
+        for i in range(1, 12):
+            self._write(f"ch{i:02d}.md", even)
+        report = lint_manuscript(self.chapters)
+        self.assertEqual([], _findings(report, "em_dash_density_local"))
+
+    def test_explanatory_extension_flagged(self) -> None:
+        body = (
+            "Her voice was flat, the kind of flat that meant she had already decided. "
+        ) * 30
+        self._write("ch01.md", body)
+        report = lint_manuscript(self.chapters)
+        found = _findings(report, "explanatory_extension")
+        self.assertTrue(found, "expected explanatory extension failure")
+        self.assertEqual("fail", found[0].severity)
+
+    def test_explanatory_extension_clean_prose_not_flagged(self) -> None:
+        body = " ".join(
+            f"She set the bread on the table and counted the jars in row {i}."
+            for i in range(80)
+        )
+        self._write("ch01.md", body)
+        report = lint_manuscript(self.chapters)
+        self.assertEqual([], _findings(report, "explanatory_extension"))
 
     def test_ordinary_ly_words_not_flagged_as_adverbs(self) -> None:
         body = "The family lived a lonely, friendly, orderly life near the assembly. " * 30

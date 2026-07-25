@@ -34,6 +34,15 @@ phase_3_drafting:
   gate: "drafting"
   outputs:
     - "manuscript/chapters"
+  checks:
+    - "timeline"
+    - "lint"
+    - "macro"
+    - "texture"
+    - "voice_lexicon"
+    - "chapter_order"
+    - "wordcount:0.85:1.25"
+    - "structure_variety"
   next: "Phase 4: Adversarial Audit"
 
 phase_4_adversarial_audit:
@@ -42,6 +51,15 @@ phase_4_adversarial_audit:
   gate: "adversarial_audit"
   outputs:
     - "artifacts/08-adversarial-audit.md"
+  checks:
+    - "timeline:required"
+    - "lint"
+    - "macro"
+    - "texture"
+    - "voice_lexicon"
+    - "chapter_order"
+    - "wordcount:0.85:1.25"
+    - "structure_variety"
   next: "Phase 5: Literary Barrier Revision Loop"
 
 phase_5_literary_barrier_loop:

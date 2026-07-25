@@ -17,6 +17,7 @@ You receive:
 4. **foundation.md** — Characters, theme, voice definition
 5. **voice-bank/** — Voice reference samples
 6. **Strengths to preserve** — Explicit list of what NOT to break
+7. **`work/steering.md`** — If the project has one (it should, in every project book-orchestrator.md initializes) and it has content, treat it as binding for this pass, overriding the evaluation/foundation on the specific point it raises. Read it every dispatch, not just the first — a user can add a line at any point mid-draft and this is the only channel to reach you with it outside a full checkpoint.
 
 You produce: A revised chapter that fixes identified issues while preserving (or enhancing) existing strengths.
 

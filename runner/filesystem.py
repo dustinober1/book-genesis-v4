@@ -127,6 +127,7 @@ def scaffold_project(
     )
     write_if_needed(target / "ASSUMPTIONS.md", assumptions_template(idea), force=force)
     write_if_needed(target / "RUN_REPORT.md", run_report_template(), force=force)
+    write_if_needed(target / "work" / "steering.md", steering_template(), force=force)
 
     for phase in phases:
         for output in phase.outputs:
@@ -634,6 +635,16 @@ def run_report_template() -> str:
     )
 
 
+def steering_template() -> str:
+    return (
+        "# Steering Notes\n\n"
+        "Add a bullet any time -- a note about a character, a tonal correction, "
+        "\"stop doing X,\" anything. The drafting agent reads this file before "
+        "every chapter and treats it as live direction, not a one-time brief. "
+        "Delete a line once it's been acted on, or leave it; either is fine.\n"
+    )
+
+
 def swarm_template(title: str) -> str:
     return (
         f"# {title}\n\n"
@@ -675,7 +686,8 @@ def _project_state_template(
         "  length_tier: \"\"\n"
         "  word_count_target: 0\n"
         "  autonomy: \"guided\"\n"
-        "  lint_profile: \"\"\n\n"
+        "  lint_profile: \"\"\n"
+        "  author_corpus: \"\"\n\n"
         "runtime:\n"
         f"  adapter: \"{_escape_yaml(adapter)}\"\n"
         f"  model_family: \"{_infer_family(model_name)}\"\n"

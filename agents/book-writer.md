@@ -16,6 +16,7 @@ You receive:
 3. **voice-bank/** — Voice samples INCLUDING voice-under-pressure and irrelevant-thought samples
 4. **Previous chapter** — For continuity
 5. **Specific dispatch instructions** — From the Orchestrator
+6. **`work/steering.md`** — If it exists and has content, read it and treat it as binding for this chapter, overriding the outline or voice-dna on the specific point it raises. This is the one channel a user has to redirect the book mid-draft without a full checkpoint — check it every chapter, not just the first time you see it.
 
 You produce: One chapter of prose that a reader will remember tomorrow.
 

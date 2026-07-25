@@ -22,7 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 import re
-from typing import Callable, Dict, List, Set
+from typing import Callable, Dict, List, Set, Tuple
 
 from runner import discover, lint, proof, timeline
 
@@ -48,7 +48,7 @@ CheckFn = Callable[[Path, List[str]], "CheckResult"]
 # false-negative cases (see its docstring), so a clean run here is not yet
 # trustworthy enough to block on.
 # None of these three are calibrated against a real corpus yet.
-ADVISORY_CHECKS: Set[str] = {"macro", "texture", "voice_lexicon"}
+ADVISORY_CHECKS: Set[str] = {"macro", "texture", "voice_lexicon", "dynamic_range"}
 
 
 @dataclass
@@ -128,6 +128,18 @@ def check_lint_check(target: Path, args: List[str]) -> CheckResult:
     chapters = _chapters_dir(target)
     if not chapters.is_dir() or not any(chapters.glob("*.md")):
         return CheckResult("lint", "skip", "no chapters to lint")
+
+    language = state_get(target, "project.language").strip().lower()
+    if language and not language.startswith("en"):
+        # Mirrors check_macro's guard above. lint.py's own module docstring
+        # names this gap: FUNCTION_WORDS, ADVERB_EXCLUDE, DIALOGUE_TAG_VERBS,
+        # MAXIM_MARKERS/CONCRETE_MARKERS, and the phrase watchlists are all
+        # English lexicons -- every check in this module, including
+        # word_echo and voice_drift, would silently mismeasure non-English
+        # prose rather than say so. A "pass" here would be a false negative
+        # a blocking gate then acts on; "skip" is the honest result.
+        return CheckResult(
+            "lint", "skip", f"language={language!r} -- lint's heuristics are English-only")
 
     profile = args[0] if args else ""
     if not profile:
@@ -275,7 +287,27 @@ def check_texture(target: Path, args: List[str]) -> CheckResult:
 
 
 def check_human_pass(target: Path, args: List[str]) -> CheckResult:
+    """runner/humanpass.py's own docstring states the thesis: every other
+    check in this package measures whether prose reads as machine-written;
+    none of them can make it read as human-written. The human pass is the
+    one lever that can -- but this check used to pass on `work/human-pass.md`
+    existing, a file the orchestrator generates itself with zero human
+    involvement required. Existence proves a worksheet was planned, not
+    that anyone touched it. This now also requires a minimum count of
+    ACTUALLY APPLIED protected spans (`<!-- hp:start -->...<!-- hp:end -->`,
+    counted via humanpass.status_manuscript), which only exist after
+    `human-pass apply` runs on a hand-edited worksheet.
+
+    `args[0]`, if given, is a literal minimum span count (same positional
+    convention as `wordcount:0.85:1.25`'s multipliers). Default: at least 1
+    chapter in 4 has a protected span (`ceil(chapters / 4)`, floor 1) --
+    strict enough to require real participation, loose enough that a human
+    pass on every single chapter isn't silently required.
+    """
+    import math
+
     from runner.filesystem import state_get  # local import: avoid a cycle
+    from runner import humanpass  # local import: avoid a cycle
 
     chapters = _chapters_dir(target)
     if not chapters.is_dir() or not any(chapters.glob("*.md")):
@@ -299,7 +331,33 @@ def check_human_pass(target: Path, args: List[str]) -> CheckResult:
             "reviewed it -- that judgment belongs to the delivery checkpoint, not to "
             "a deterministic check.",
         )
-    return CheckResult("human_pass", "pass", "human-pass worksheet exists")
+
+    status = humanpass.status_manuscript(chapters)
+    total_spans = sum(status.values())
+    chapters_with_spans = sum(1 for n in status.values() if n > 0)
+    total_chapters = len(status)
+
+    if args and args[0]:
+        min_spans = int(args[0])
+    else:
+        min_spans = max(1, math.ceil(total_chapters / 4)) if total_chapters else 1
+
+    if total_spans < min_spans:
+        return CheckResult(
+            "human_pass", "fail",
+            f"{total_spans} protected span(s) applied across {chapters_with_spans}/"
+            f"{total_chapters} chapters, need >= {min_spans}",
+            "work/human-pass.md exists, but `human-pass apply` has not run on a "
+            "hand-rewritten worksheet, or ran with zero accepted rewrites. Hand-edit "
+            "at least the lines worth protecting in the worksheet, then run "
+            "`python3 runner/cli.py human-pass apply <project>`. Or set "
+            "project.skip_human_pass=true to opt out explicitly -- that is still an "
+            "honest 'no human pass', unlike an unedited worksheet quietly passing.",
+        )
+    return CheckResult(
+        "human_pass", "pass",
+        f"{total_spans} protected span(s) applied across {chapters_with_spans}/"
+        f"{total_chapters} chapters (>= {min_spans})")
 
 
 def check_voice_lexicon(target: Path, args: List[str]) -> CheckResult:
@@ -318,6 +376,65 @@ def check_voice_lexicon(target: Path, args: List[str]) -> CheckResult:
     return CheckResult("voice_lexicon", "pass", "no never_say violations", text)
 
 
+def check_structure_variety(target: Path, args: List[str]) -> CheckResult:
+    """agents/book-writer.md:168 states a HARD RULE: "If the previous
+    chapter used structure X, you CANNOT use structure X again." The writer
+    already emits the machine-readable `meta chapter=N structure=... `
+    record every check needs, runner/ledger.py already parses it into
+    `structural_approaches` -- but nothing enforced the rule itself. This
+    check is that enforcement: it is deliberately NOT in ADVISORY_CHECKS,
+    because a capitalized "HARD RULE" that never blocks anything is advice,
+    not a rule.
+
+    A chapter without a `meta structure=...` record contributes nothing
+    (same graceful-skip contract as ledger.build_ledger's own
+    chapters_missing_meta) -- this check only ever judges the structures it
+    was actually given, never invents a violation from missing data.
+    """
+    from runner import ledger  # local import: avoid a cycle
+
+    chapters = _chapters_dir(target)
+    if not chapters.is_dir() or not any(chapters.glob("chapter-*.md")):
+        return CheckResult("structure_variety", "skip", "no finalized chapters yet")
+
+    report = ledger.build_ledger(chapters, report_dir=chapters)
+    approaches = report.structural_approaches
+    if len(approaches) < 2:
+        return CheckResult(
+            "structure_variety", "skip",
+            "fewer than 2 chapters have a `meta structure=...` record")
+
+    problems: List[str] = []
+    for (prev_ch, prev_s), (cur_ch, cur_s) in zip(approaches, approaches[1:]):
+        if prev_s == cur_s:
+            problems.append(
+                f"{prev_ch} and {cur_ch} both use structure {cur_s!r} -- "
+                "book-writer.md's HARD RULE forbids consecutive repeats")
+
+    total = len(approaches)
+    if total >= 6:
+        counts: Dict[str, int] = {}
+        for _, s in approaches:
+            counts[s] = counts.get(s, 0) + 1
+        for structure, n in sorted(counts.items(), key=lambda kv: -kv[1]):
+            share = n / total
+            if share > 0.40:
+                problems.append(
+                    f"structure {structure!r} used in {n}/{total} chapters "
+                    f"({share:.0%}) -- exceeds the ~40% single-structure ceiling "
+                    "book-writer.md's STRUCTURAL DIVERSITY section sets for the book")
+
+    if problems:
+        text = "\n".join(f"- {p}" for p in problems)
+        text += "\n\nAll structures used so far: " + ", ".join(
+            f"{ch}={s}" for ch, s in approaches)
+        return CheckResult(
+            "structure_variety", "fail", f"{len(problems)} violation(s)", text)
+    return CheckResult(
+        "structure_variety", "pass",
+        f"{total} chapters, no consecutive repeats, no structure over 40% share")
+
+
 def check_book_meta(target: Path, args: List[str]) -> CheckResult:
     from runner import compile as _compile  # local import: avoid a cycle
 
@@ -326,6 +443,78 @@ def check_book_meta(target: Path, args: List[str]) -> CheckResult:
     if problems:
         return CheckResult("book_meta", "fail", f"{len(problems)} issue(s)", "\n".join(problems))
     return CheckResult("book_meta", "pass", f'"{meta.title}" by {meta.author}')
+
+
+_HEADLINE_FLOOR = re.compile(r"\*\*Genesis Floor:\*\*\s*([0-9]+(?:\.[0-9]+)?)")
+
+# Below this coefficient of variation, chapter-to-chapter Genesis Floor
+# scores are suspiciously flat -- no editorial benchmark seeded this
+# number (unlike em_dash_per_1k etc. in lint.py), it is a first-pass
+# estimate: real bestsellers vary chapter to chapter because some chapters
+# take real risks and some play it safer, and a manuscript where every
+# chapter lands in an near-identical band is itself a signature worth a
+# human's attention, the same way agents/book-evaluator.md's Risk
+# dimension exists to surface it at the single-chapter level. Advisory,
+# not blocking -- see ADVISORY_CHECKS -- because "the scores are flat" is
+# a prompt to go read the manuscript, not proof the manuscript is bad; a
+# genuinely, consistently excellent book would also fail this heuristic.
+_MIN_DYNAMIC_RANGE_CV = 0.02
+_DYNAMIC_RANGE_MIN_CHAPTERS = 6
+
+
+def check_dynamic_range(target: Path, args: List[str]) -> CheckResult:
+    """A per-chapter minimum-only gate (Floor >= 8.5, Average >= 9.0, no
+    dimension < 8.0 -- see genesis-score-codex.md) selects for the
+    manuscript with no weak chapter, which is mechanically also the
+    manuscript with no chapter pushed hard enough to risk becoming one.
+    Nothing else in this package measures that: lint/macro/texture all
+    operate on PROSE, not on the evaluator's own per-chapter verdicts. This
+    reads every evaluations/eval-chapter-N.md HEADLINE line the evaluator
+    already writes and flags when the Genesis Floor scores across chapters
+    are too uniform to be believable variation rather than the polish loop
+    grinding every chapter toward the same safe target.
+    """
+    evals_dir = target / "evaluations"
+    if not evals_dir.is_dir():
+        return CheckResult("dynamic_range", "skip", "no evaluations directory")
+
+    scores: List[Tuple[str, float]] = []
+    for p in sorted(evals_dir.glob("eval-chapter-*.md")):
+        if not p.is_file():
+            continue
+        m = _HEADLINE_FLOOR.search(p.read_text(encoding="utf-8"))
+        if m:
+            scores.append((p.name, float(m.group(1))))
+
+    if len(scores) < _DYNAMIC_RANGE_MIN_CHAPTERS:
+        return CheckResult(
+            "dynamic_range", "skip",
+            f"only {len(scores)} chapter score(s) found, need >= {_DYNAMIC_RANGE_MIN_CHAPTERS}")
+
+    values = [v for _, v in scores]
+    mean = sum(values) / len(values)
+    variance = sum((v - mean) ** 2 for v in values) / len(values)
+    stdev = variance ** 0.5
+    cv = (stdev / mean) if mean else 0.0
+    min_cv = float(args[0]) if args and args[0] else _MIN_DYNAMIC_RANGE_CV
+
+    detail = "Genesis Floor by chapter: " + ", ".join(f"{n}={v:.1f}" for n, v in scores)
+    if cv < min_cv:
+        return CheckResult(
+            "dynamic_range", "fail",
+            f"coefficient of variation {cv:.3f} across {len(values)} chapters "
+            f"(mean {mean:.2f}, std {stdev:.3f}) below {min_cv:.3f}",
+            detail + "\n\nEvery chapter scoring within a near-identical band can mean "
+            "the manuscript is consistently excellent -- or that the polish loop is "
+            "grinding every chapter toward the same safe target instead of letting "
+            "some chapters take a real risk. Read a sample before concluding either "
+            "way; this is a prompt, not a verdict.",
+        )
+    return CheckResult(
+        "dynamic_range", "pass",
+        f"coefficient of variation {cv:.3f} across {len(values)} chapters (>= {min_cv:.3f})",
+        detail,
+    )
 
 
 def check_epub(target: Path, args: List[str]) -> CheckResult:
@@ -354,6 +543,8 @@ CHECK_REGISTRY: Dict[str, CheckFn] = {
     "texture": check_texture,
     "human_pass": check_human_pass,
     "voice_lexicon": check_voice_lexicon,
+    "structure_variety": check_structure_variety,
+    "dynamic_range": check_dynamic_range,
 }
 
 

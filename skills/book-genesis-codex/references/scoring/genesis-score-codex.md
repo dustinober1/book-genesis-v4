@@ -17,7 +17,7 @@ If the adversarial audit concludes `MAJOR REWRITE`, the score may be recorded pr
 
 ## Dimensions
 
-The score uses 10 dimensions:
+The score uses 10 GATED dimensions (count toward Floor Score, Weighted Average, and the Approval Gate):
 
 1. Originality
 2. Theme
@@ -29,6 +29,10 @@ The score uses 10 dimensions:
 8. Market
 9. Voice
 10. Opening
+
+Plus one INFORMATIONAL dimension, tracked but never gated — see Risk below and "Why Risk Is Not Gated" under Calculation.
+
+11. Risk (informational only)
 
 ## What Each Dimension Measures
 
@@ -87,6 +91,12 @@ The score uses 10 dimensions:
 - first-chapter promise
 - whether the ending ultimately justifies that promise
 
+### Risk (informational — see "Why Risk Is Not Gated" below)
+
+- evidence of a choice that could have failed: a refused payoff, a protagonist decision left unredeemed, a formal device sustained at real cost, a scene that serves nothing but itself and earns its place anyway
+- absence of evidence is not a penalty by itself — score 6.0 ("no identifiable risk taken") and say so plainly; this dimension exists to surface competent-but-safe manuscripts, not to punish a book that had no reason to take one
+- do not confuse Risk with recklessness: a risk that simply doesn't work is still evidence for this dimension (the book tried something), but is also evidence AGAINST whichever gated dimension the failure actually damaged (Coherence, Emotion, Pacing) — score both honestly rather than letting one excuse the other
+
 ## Scoring Rules
 
 - baseline assumption is competence, not excellence
@@ -96,8 +106,8 @@ The score uses 10 dimensions:
 
 ## Calculation
 
-Floor Score = minimum dimension score
-Weighted Average = weighted mean of the 10 dimensions
+Floor Score = minimum of the 10 GATED dimension scores (Risk excluded)
+Weighted Average = weighted mean of the 10 GATED dimensions (Risk excluded)
 
 Suggested weights:
 
@@ -112,15 +122,23 @@ Suggested weights:
 - Voice: 1.1
 - Opening: 0.8
 
+Risk has no weight and is never averaged into Weighted Average or compared against Floor Score.
+
+### Why Risk Is Not Gated
+
+Three simultaneous minimums (Floor >= 8.5, Average >= 9.0, no dimension < 8.0) select for the manuscript with no weak dimension — which is also, mechanically, the manuscript with no dimension pushed hard enough to risk becoming a weak one. A book that never gambles never fails, and under a pure floor-and-average gate, never failing scores exactly as well as a book that gambled and won. Making Risk a THIRD kind of gate criterion (a floor of its own) would just relocate the safe-optimum problem one dimension over — the system would learn to hit a Risk floor exactly as reliably as it hits every other floor, at which point "risk" stops meaning risk. Tracking it as informational, never gated, is what keeps it honest: a low score here costs nothing and is never something the pipeline optimizes toward, so it stays a genuine signal for the human reading the report at CHECKPOINT 2, not one more number for the polish loop to chase.
+
 ## Approval Gate
 
 Approval requires all of the following:
 
-- Floor Score >= 8.5
-- Weighted Average >= 9.0
-- no dimension below 8.0
-- evidence present for every dimension
+- Floor Score >= 8.5 (10 GATED dimensions only)
+- Weighted Average >= 9.0 (10 GATED dimensions only)
+- no GATED dimension below 8.0
+- evidence present for every dimension, including Risk
 - adversarial audit not marked `MAJOR REWRITE`
+
+Risk is reported alongside the gate verdict but never blocks it, regardless of score.
 
 ## Revision Logic
 
@@ -136,9 +154,10 @@ If the manuscript fails:
 The final report saved to `artifacts/09-genesis-score.md` or `artifacts/09-genesis-score-codex.md` must include:
 
 - project and runtime context
-- Dimension Scores table
+- Dimension Scores table, including Risk marked "(informational, not gated)"
 - Floor Score
 - Weighted Average
+- Risk score with its evidence, reported separately from the gate verdict
 - Gate Verdict
-- weakest dimension
+- weakest GATED dimension
 - required intervention or approval note

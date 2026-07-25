@@ -121,6 +121,28 @@ What you CAN parallelize / batch safely:
 
 When in doubt: **finish the chapter you're on before starting the next.** A correct sequential book beats a fast incoherent one.
 
+## PHASE 0.5 — AUTHOR CARD (before project init, not one of the 4 CHECKPOINTS)
+
+The pipeline's only input is a one-line idea. Everything downstream of it — the voice bank, the Voice DNA, every chapter — is therefore model-authored by default: nothing in Phases 1-2.5 asks who is actually behind the book. That absence is itself a legibility problem worth closing before Phase 1, not a gap the Evaluator's anti-AI scan can catch after the fact — a manuscript can pass every deterministic check and still have no one behind it.
+
+**In the SAME turn you receive the idea, before creating the project directory, ask the user (once, briefly — this is not a blocking gate, it is an invitation):**
+
+1. A place you know down to the smell, the sound, the specific light — real, not researched.
+2. A job, skill, or process you've actually done with your hands (not looked up).
+3. Two or three things you refuse to write into this book, on principle.
+4. Two comp titles whose PROSE (not just plot) you want this book to sound like — different from the market comps `book-researcher` will find, which are chosen for positioning, not voice.
+5. Do you have existing writing of your own — journal entries, an old draft, anything — you'd let this pipeline read to calibrate its own defaults against your actual rhythm? If yes, ask for a directory path.
+
+**If the user answers:** fold 1-4 into `foundation.md`'s voice-bank instructions as concrete, non-negotiable material for `book-architect`/`voice-fingerprint` to draw on — a real memory beats an invented one every time it's usable. If a corpus path is given, set `project.author_corpus` in STATE.yaml to it.
+
+**If the user has no answer, says "just go," or ignores the question:** proceed immediately with Phase 1 on defaults. This is an offer, not a requirement — do not block, do not ask twice, do not treat silence as a second checkpoint. The 4 CHECKPOINTS below are unchanged.
+
+**If `project.author_corpus` is set,** run once, right after Phase 1 (before Phase 1.5):
+```
+python3 runner/cli.py baseline {path} --corpus {project.author_corpus} --profile {genre} --out {path}/work/baseline-report.md
+```
+This compares the manuscript-to-be against the author's own measured em-dash/adverb/dialogue-ratio/FK-grade rates (`runner/corpus.py`) and derives stricter lint thresholds where the author's own prose already runs tighter than the genre default — never looser, unless the user explicitly says otherwise (`--allow-loosen`). If it produces a `style-profile.suggested.yaml`, tell the user it exists and that adopting it is a manual `mv style-profile.suggested.yaml style-profile.yaml` — never do this silently. Surface the comparison table itself at CHECKPOINT 1 ("your writing vs. this book: em-dashes X/1k vs Y/1k, ...") so the author sees the calibration before approving the foundation, not buried in a file they may never open.
+
 ## PROJECT INITIALIZATION
 
 When you receive an idea, IMMEDIATELY:
@@ -146,13 +168,30 @@ When you receive an idea, IMMEDIATELY:
 │   └── continuity/
 ├── feedback/
 ├── research/
+├── work/
+│   └── steering.md
 └── delivery/
     ├── editorial/
     └── production/
 ```
 
 3. Initialize STATE.yaml with project metadata (schema below).
-4. Immediately dispatch Phase 1.
+4. Create `{path}/work/steering.md` with just this header (nothing else — the file starts empty of content, not empty of existence):
+   ```markdown
+   # Steering Notes
+
+   Add a bullet any time — a note about a character, a tonal correction, "stop doing X," anything. book-writer and book-editor read this file before every dispatch (see Step A / Step B below) and treat it as live direction, not a one-time brief. Delete a line once it's been acted on, or leave it; either is fine.
+   ```
+5. Immediately dispatch Phase 1.
+
+### Mid-draft steering (read this before Phase 3)
+
+`work/steering.md` is the ONLY channel for the user to redirect the book between CHECKPOINT 1 and CHECKPOINT 2 without derailing autonomy — see PARALLELISM and THE 4 CHECKPOINTS above: this pipeline runs 25-40 chapters with no scheduled pause in between, and until this file existed there was no way for a mid-draft "actually, make her less articulate" to reach the writer except by interrupting the run. It does NOT add a 5th checkpoint: you never wait for it to be non-empty, never block a dispatch on it, and never prompt the user to fill it in. It is checked, not awaited.
+
+- Every book-writer dispatch (Step A) and every book-editor dispatch (Step B, Step G fixes, Phase 5 revision) reads `work/steering.md` in full, alongside its other required reading.
+- If it has new content since the last time you read it, treat it as binding for this dispatch — it overrides the outline/voice-dna on the specific point it raises, the same way a human editor's margin note overrides a style guide.
+- If the user adds a note mid-chapter (between Step A starting and Step G passing), it takes effect on the NEXT dispatch, not retroactively on the one in flight — do not interrupt a running Step A to re-read the file.
+- If it's empty, that's the normal case. Do not ask the user to fill it in, and do not treat silence as feedback either way.
 
 ## PHASE EXECUTION — DETAILED
 
@@ -297,12 +336,14 @@ Prompt: "Write chapter {N} of '{title}'.
 Project dir: {path}
 Read: {path}/outline.md for this chapter's plan (emotional anchor: {anchor}, emotional surprise: {surprise}, structural approach: {approach}, word count target: {chapter_word_target}).
 Read: {path}/voice-dna.md for voice specs. FOLLOW THEM.
+Read: {path}/work/steering.md — if it has new content, it is binding for this chapter, overriding the outline/voice-dna on the specific point it raises.
 Read: {path}/voice-bank/ for voice reference.
 Read: {path}/ENTITY_STATE.yaml for canonical facts and who-knows-what.
 {If N>1: Read {path}/manuscript/chapters/chapter-{N-1}.md (the FINALIZED previous chapter) for continuity.}
 {If N==1: Read {path}/research/bestseller-dna.md Section 2 for prose rules and honor foundation.md OPENING STRATEGY.}
 {If {path}/research/texture-bank.md exists: Read it. Draw on 2-4 entries for THIS chapter that the outline places here — real, sourced, specific detail beats invented generic detail. Do not force in entries that don't fit this scene.}
 {If N>1: Read {path}/work/retired.md — the retired-phrase ledger. Do NOT reuse anything listed: phrases, simile vehicles, chapter-opening words, dialogue tags (besides said/asked), or the most recent structural approach/hook type. This is the mechanical form of the "don't repeat the previous chapter" rules below — the ledger is generated from what was ACTUALLY used, not what the outline planned.}
+{If N>1: Read {path}/evaluations/preprocess-chapter-{N-1}.md — the previous chapter's deterministic lint/proof findings (Step E). If it flagged a density tic (em-dash, adverb, filter-word, explanatory-extension) at fail/warn severity, do not let this chapter repeat it; a lint report that only ever gets read by the length-gate check (Step G.2a) never once reaches the writer, so the one part of this pipeline that cannot rationalize its own findings currently has no path back into the prose.}
 
 Word count target for this chapter: {chapter_word_target}. Land within 90-115% of it — if you undershoot, that means a beat is missing (scene played in summary, thin sensory grounding, cut subtext layer, missing secondary-character moment), not that the chapter is done.
 This chapter's structural approach: {approach}. Previous chapter used: {prev_approach}. DO NOT repeat.
@@ -319,7 +360,7 @@ Dispatch: book-editor
 Mode: connective
 Prompt: "Dialogue and hook/pull pass on chapter {N} of '{title}'.
 Project dir: {path}
-Read: {path}/manuscript/chapters/chapter-{N}.md, {path}/voice-dna.md (character voice cards), {path}/foundation.md, {path}/outline.md (next-chapter context), {path}/ENTITY_STATE.yaml.
+Read: {path}/manuscript/chapters/chapter-{N}.md, {path}/voice-dna.md (character voice cards), {path}/foundation.md, {path}/outline.md (next-chapter context), {path}/ENTITY_STATE.yaml, {path}/work/steering.md (binding on this pass if it has new content).
 
 Dialogue: Run the cover-the-name test on ALL speaking characters. Fix: voice bleeding, missing subtext, thesaurus tags / tag-adverbs, tag/beat ratio, filler. Light naturalism only — leave heavy mess to the Disruptor. Touch ONLY dialogue + its immediate mechanics; never narrative prose. Introduce no continuity contradiction.
 
@@ -353,12 +394,14 @@ Run with the Bash tool:
 ```
 python3 runner/cli.py lint {path} --profile {genre}
 python3 runner/cli.py proof {path}
+python3 runner/cli.py check structure_variety {path}
 ```
-This replaces the raw `grep -o '—' | wc -l` / `grep -oiP '\w+ly\b' | wc -l` / sentence-opener bash that used to live here — `runner/lint.py`'s `em_dash_density`, `adverb_density`, `opener_monotony`, and `sentence_opener_repeat` findings already do this with density normalization (per 1k/10k words, genre-adjusted) that the raw grep counts never had, and running it against the whole manuscript-so-far catches cross-chapter patterns a single-chapter bash pass structurally cannot see. (`skills/book-genesis-full/SKILL.md`'s own Phase 3.8 already routes through `lint`/`proof` this way — this closes the gap where the orchestrator's Step E had drifted from it.)
+This replaces the raw `grep -o '—' | wc -l` / `grep -oiP '\w+ly\b' | wc -l` / sentence-opener bash that used to live here — `runner/lint.py`'s `em_dash_density`, `adverb_density`, `opener_monotony`, `sentence_opener_repeat`, `explanatory_extension` (Pattern #11), and `filter_word_density` findings already do this with density normalization (per 1k/10k words, genre-adjusted) that the raw grep counts never had, and running it against the whole manuscript-so-far catches cross-chapter patterns a single-chapter bash pass structurally cannot see. (`skills/book-genesis-full/SKILL.md`'s own Phase 3.8 already routes through `lint`/`proof` this way — this closes the gap where the orchestrator's Step E had drifted from it.) `explanatory_extension` hits are the Disruptor's top priority in Step D (Simile Surgery already names it as such).
 
-Two things `lint`/`proof` do NOT yet cover, still checked directly:
-1. **Pattern #11 (explanatory simile extension)** — no runner check exists for this yet: `grep -n 'not because\|not .*, but\|the kind of .* that' {chapter}`. If found, this is the Disruptor's top priority in Step D (Simile Surgery already names it as such).
-2. **Per-chapter word count.** `runner/cli.py`'s `wordcount` gate check compares the WHOLE manuscript against `project.word_count_target` — this chapter's OWN target from `outline.md` needs a direct check: `grep -oiP '\b\w+\b' {chapter} | wc -l` vs. this chapter's outline target. Under 85% of target = FLAG `length_short` in the preprocess report — this chapter cannot PASS Step G until fixed (see Step G.2a). Over 130% is a note, not a block, unless Outline Quality Check 7 (no chapter >2x the shortest) is violated.
+`structure_variety` enforces book-writer.md's structural-diversity HARD RULE mechanically (no two consecutive chapters sharing a `meta structure=...` value, no single structure over ~40% share once 6+ chapters are tracked). It exits non-zero on a real violation and self-skips cleanly (exit 0) until at least 2 chapters have recorded a `meta` line, so it is always safe to run even on chapter 1. A non-zero exit here is a Step G blocker exactly like a length-short flag: the writer picked a structure the previous chapter already used, or the outline's planned structural approach for this chapter needs to change — dispatch **book-editor** or **book-architect** accordingly before this chapter can PASS.
+
+One thing `lint`/`proof` does NOT yet cover, still checked directly:
+1. **Per-chapter word count.** `runner/cli.py`'s `wordcount` gate check compares the WHOLE manuscript against `project.word_count_target` — this chapter's OWN target from `outline.md` needs a direct check: `grep -oiP '\b\w+\b' {chapter} | wc -l` vs. this chapter's outline target. Under 85% of target = FLAG `length_short` in the preprocess report — this chapter cannot PASS Step G until fixed (see Step G.2a). Over 130% is a note, not a block, unless Outline Quality Check 7 (no chapter >2x the shortest) is violated.
 
 Log results to `evaluations/preprocess-chapter-{N}.md`.
 
@@ -368,6 +411,7 @@ Dispatch: book-evaluator
 Prompt: "Evaluate chapter {N} of '{title}'.
 Project dir: {path}
 Score against: {path}/outline.md (emotional anchor, emotional surprise, chaos moments), {path}/voice-dna.md, {path}/research/bestseller-dna.md, the previous chapter, and {path}/reader-personas.md.
+Read: {path}/evaluations/preprocess-chapter-{N}.md — this chapter's own deterministic lint/proof findings (Step E, run just before this dispatch). Cross-check the anti-AI scan against it: a fail/warn on em_dash_density, adverb_density, filter_word_density, explanatory_extension (Pattern #11), or a *_local single-chapter spike should show up as measurable evidence for the corresponding anti-AI pattern or Prose dimension score, not be silently dropped.
 Run: Genesis Score (7 dimensions — read STATE.yaml for which Dimension 7 applies), 20-pattern anti-AI scan (genre targets), 5-reader simulation (Devourer, Critic, Hostile, Casual, Devoted — Primary persona feeds Devourer/Devoted, Hostile persona feeds Hostile/Critic), character chaos check, Tomorrow Test.
 {If N==1: Run Discovery Test (BUY/MAYBE/PUT BACK)}
 {If N==last: Run Residue Test}
@@ -392,6 +436,12 @@ python3 runner/cli.py ledger {path}
 ```
 This rebuilds `work/retired.md` from every finalized chapter, including the one that just closed — so the next chapter's Step A reads an up-to-date ledger, not a stale one from before this chapter existed.
 
+**If N==1, also run (once, non-blocking):**
+```
+python3 runner/cli.py human-pass plan {path}
+```
+`build_plan` scans whatever chapters currently exist in `manuscript/chapters/` — at this point that is chapter 1 alone, so this naturally produces a chapter-1-only worksheet at `work/human-pass.md` without any extra flag. This is deliberately EARLY: `runner/humanpass.py`'s own thesis is that a real, hand-rewritten line is the one lever nothing else in this pipeline can substitute for, and Phase 5.7 (the only other place this ran, before this change) fires after all N chapters are drafted — too late for the author's actual rhythm to shape anything but the final polish pass. Tell the user, in the SAME message as CHECKPOINT 1's next natural touchpoint (do not open a new blocking checkpoint for this — see THE 4 CHECKPOINTS above, which this must not grow to 5): "Chapter 1's human-pass worksheet is ready at `work/human-pass.md` — hand-rewrite a line or two whenever you like; I'll keep drafting and won't wait." If they act on it before you reach chapter 2's Step A, run `human-pass apply` and let its rewrites (now wrapped in `<!-- hp:start -->...<!-- hp:end -->`, per the RULES section in book-writer.md/book-editor.md/book-disruptor.md) inform the writer's read of `chapter-1.md` for continuity going forward. If they never touch it, that's a legitimate outcome, not a stall — Phase 5.7 still runs the authoritative full-manuscript worksheet later, this is a head start, not a replacement.
+
 Then advance to the next chapter's Step A. (Continuity dependency: the next writer reads THIS now-finalized chapter.)
 
 ### PHASE 4: FULL-MANUSCRIPT EVALUATION (after all chapters pass)
@@ -404,6 +454,13 @@ Read ALL chapters sequentially.
 Check: (1) 3+ chapters opening the same way? (2) Emotional anchors repeating? (3) Tension sag in the middle third? (4) Structural variety across chapters? (5) Chaos distribution? (6) Oscillation count (target ~8). (7) Shareable moments (need 3-4). (8) Discovery Test on Ch1. (9) Residue Test on the final chapter. (10) CVI-Launch and CVI-Legacy.
 Write to: {path}/evaluations/eval-full-manuscript.md"
 ```
+
+**Also run, once all per-chapter evaluations exist (informational, never blocks this phase):**
+```
+python3 runner/cli.py check dynamic_range {path}
+python3 runner/cli.py check structure_variety {path}
+```
+`dynamic_range` reads the Genesis Floor line from every `evaluations/eval-chapter-N.md` HEADLINE and flags chapter-to-chapter scores that are suspiciously uniform — the signature of the polish loop (Step G) grinding every chapter toward the same safe target rather than letting some genuinely vary. It is advisory (exits 0 even on a flagged result) — a flat score curve is a prompt to sample the manuscript, not proof of a problem, since a consistently excellent book would also trip this heuristic. `structure_variety` is NOT advisory; if it fails here, that means a chapter slipped through Step G with book-writer.md's structural-diversity HARD RULE actually violated (it should already have been caught per-chapter in Step E/G, so a failure here is a signal the per-chapter check was skipped or a `meta` line was missing) — fix before Phase 5.
 
 Update STATE.yaml (`genesis_score.*`, `commercial_viability.*`).
 
@@ -487,6 +544,7 @@ project:
   device: ""
   comp_titles: []
   engagement_type: {primary: "", secondary: "", tertiary: ""}
+  author_corpus: ""  # path to the author's own writing, if they gave one (see AUTHOR CARD below); empty is normal
   created: ""
   updated: ""
 

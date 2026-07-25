@@ -239,6 +239,8 @@ Symbols must be ORGANIC — they arise from the world of the story, not imposed 
 
 **IMPORTANT: Not every detail is a symbol.** Allow 30-40% of descriptive details to be TEXTURE — things that exist because the world is full of things, not because the theme requires them. A book where every detail resonates with the theme feels like a puzzle, not a world.
 
+**Also write `{path}/foundation/motifs.md`** — a machine-readable record of the same 2-4 symbols/motifs, one line each: `motif id=lamp term="the lamp"` (the exact phrase or image, matching how it will actually appear in prose — `runner/cli.py ledger`'s retired-phrase ledger reads this file and exempts any matching simile vehicle or chapter-opening word from retirement. Without it, the ledger's own repetition-prevention machinery cannot tell a deliberate recurring motif from an accidental tic and will ban the SECOND planned appearance of a symbol this section just asked the Writer to reuse across the book.
+
 ### 6. VOICE DEFINITION
 
 Define the narrative voice with precision:

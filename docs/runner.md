@@ -38,7 +38,11 @@ Runs every deterministic check the current (or `--phase`-named) phase declares i
 
 An unrecognized check name in the manifest is reported as an `error`, not silently skipped — a typo can't quietly disable a gate.
 
-Some checks are **advisory**: they run and report their real status on every gate, but a fail/error there never blocks `advance-phase` (see `gates.ADVISORY_CHECKS` in `runner/gates.py`). `--json`'s per-result objects carry an `"advisory": true/false` field, and the Markdown report marks them `STATUS (advisory)` in the table plus a summary line naming any that flagged. Currently advisory: `macro`, `texture`, `voice_lexicon` — none of their thresholds are calibrated against a real corpus yet. Promotion to a real, blocking gate is a one-line change (deleting the name from `ADVISORY_CHECKS`), not a rewrite.
+Some checks are **advisory**: they run and report their real status on every gate, but a fail/error there never blocks `advance-phase` (see `gates.ADVISORY_CHECKS` in `runner/gates.py`). `--json`'s per-result objects carry an `"advisory": true/false` field, and the Markdown report marks them `STATUS (advisory)` in the table plus a summary line naming any that flagged. Currently advisory: `macro`, `texture`, `voice_lexicon`, `dynamic_range` — none of their thresholds are calibrated against a real corpus yet. Promotion to a real, blocking gate is a one-line change (deleting the name from `ADVISORY_CHECKS`), not a rewrite.
+
+### `check`
+
+Runs exactly one `gates.CHECK_REGISTRY` entry standalone, without a manifest or a `Phase` object — `gate` is `book-genesis-codex`-specific (it needs `manifest.yaml`); `check` is for any pipeline that dispatches individual checks directly, notably `agents/book-orchestrator.md`, which has its own phase numbering and doesn't share the codex manifest. `python3 runner/cli.py check <name> <path> [args...]`, e.g. `check structure_variety my-book` or `check dynamic_range my-book 0.01` (positional args after the path, same convention as `wordcount:0.85:1.25` in a manifest's `checks:` list). Exit 0 on pass/skip or an advisory fail; exit 1 on a real blocking fail/error — same semantics `gate` uses per-check, just for one check instead of a whole phase's list.
 
 ### `set` / `get`
 
@@ -46,7 +50,7 @@ Read or write a `PROJECT_STATE.yaml` value. A bare key (`status`) uses the origi
 
 ### `lint` / `check-timeline` / `proof` / `structure`
 
-Standalone versions of the checks `gate` runs as a group — useful when iterating on one specific problem. `lint` catches machine-prose patterns (em-dash density, phrase repetition, opener monotony, close-proximity word echo, sentence-opener repeats within a paragraph, voice drift between the first and last third of the manuscript). `check-timeline` validates a `TIMELINE.md`/`TIMELINE.txt` chronology sheet for age/span contradictions. `proof` catches typographic defects (unbalanced quotes, doubled words, chapter numbering gaps) as distinct from lint's stylistic checks. `structure` reports a character presence matrix, absence gaps, and per-speaker dialogue differentiation.
+Standalone versions of the checks `gate` runs as a group — useful when iterating on one specific problem. `lint` catches machine-prose patterns (em-dash density, phrase repetition, opener monotony, close-proximity word echo, sentence-opener repeats within a paragraph, voice drift between the first and last third of the manuscript, filter-word/psychic-distance density). Three of those densities (em-dash, "not X but Y", adverb) also run a **local tier**: a single chapter running at 1.5x the manuscript-wide ceiling fails on its own (`<check>_local`), even when the whole-manuscript average is clean — a manuscript-wide average hides one hot chapter behind many clean ones. `lint` skips (rather than falsely passing) when `PROJECT_STATE.yaml`'s `project.language` is set and isn't English — every lexicon in `lint.py` is English-only, same guard as `macro` below. `check-timeline` validates a `TIMELINE.md`/`TIMELINE.txt` chronology sheet for age/span contradictions. `proof` catches typographic defects (unbalanced quotes, doubled words, chapter numbering gaps) as distinct from lint's stylistic checks. `structure` reports a character presence matrix, absence gaps, and per-speaker dialogue differentiation.
 
 `lint` auto-discovers a `style-profile.yaml` at the project root (or pass `--style-profile <path>`) and applies any threshold overrides it declares on top of the genre profile — see "Personal calibration" below.
 
@@ -57,6 +61,10 @@ Book-level template detection: chapter opening/closing mode share (dialogue / qu
 ### `ledger`
 
 Scans every finalized `chapter-N.md` and writes `work/retired.md`: phrases, simile vehicles, chapter-opening words, and dialogue tags already used, plus (when each chapter's self-report carries a `meta` record) the most recently used structural approach and hook type. Meant to run after each chapter clears its quality gate, with the result fed into the NEXT chapter's writer dispatch as a banned list — turning the pipeline's repetition checks from post-mortem into prevention.
+
+If `foundation/motifs.md` exists (`motif id=lamp term="the lamp"`, same flat-record syntax as `research/texture-bank.md`), any simile vehicle or chapter-opening word matching a declared motif term is excluded from retirement — a deliberate recurring image is the opposite of an accidental tic, and this ledger's job is to stop the second *accidental* use, never a planned fifth appearance of a motif. Optional overlay; absent is the normal case and a no-op.
+
+The gate check `structure_variety` (part of `gate`, not its own CLI verb) enforces agents/book-writer.md's structural-diversity HARD RULE mechanically: it reads the same `meta structure=...` records this command does and fails on two consecutive chapters sharing a structure, or one structure holding more than ~40% of chapters once 6+ are tracked. It is not in `ADVISORY_CHECKS` — unlike `macro`/`texture`/`voice_lexicon`, a violation blocks phase advancement, since the rule it enforces is written as a hard rule, not a suggestion. Skips cleanly (never fails) until at least 2 chapters have recorded a `meta` line.
 
 ### `texture` (advisory)
 
@@ -71,7 +79,7 @@ The one lever nothing else in this package can substitute for: a small, mechanic
 - `apply` re-verifies each chapter's sha256 hasn't changed since `plan` (refusing that chapter's edits otherwise — stale offsets are not safe to splice), archives the pre-edit chapter, splices the accepted rewrites in, and wraps each one in `<!-- hp:start -->...<!-- hp:end -->` markers so no later automated pass overwrites it. Those markers are ordinary HTML comments as far as lint, proof, and the EPUB compiler are concerned — invisible to the reader and to every measurement.
 - `status` reports how many protected spans each chapter currently has.
 
-This is a real (non-advisory) gate on Phase 7: Production — `human_pass` fails until `work/human-pass.md` exists. Set `project.skip_human_pass=true` to opt out explicitly (this is what `demo` does, since it has no human in the loop by construction).
+This is a real (non-advisory) gate on Phase 7: Production — `human_pass` fails until `work/human-pass.md` exists AND a minimum number of protected spans have actually been applied (default: `ceil(chapters / 4)`, floor 1 — override with `human_pass:<N>` in a manifest's `checks:` list). Worksheet existence alone used to be sufficient, which a fully autonomous run could satisfy without a human ever touching anything; counting applied spans via `status` closes that gap. Set `project.skip_human_pass=true` to opt out explicitly (this is what `demo` does, since it has no human in the loop by construction) — an honest "no human pass" is a legitimate result this check still passes; an unedited worksheet quietly passing was not.
 
 ### `voice-lexicon` (advisory)
 
@@ -79,7 +87,15 @@ Checks attributed dialogue against each character's `never_say` list in `voice-l
 
 ### `baseline`
 
-Compares a manuscript against a directory of the author's OWN writing (`--corpus <dir>`, `.md`/`.txt` files, 1,000-word minimum) and writes `work/baseline-report.md` — a metric-by-metric comparison (em-dash density, adverb density, dialogue ratio, Flesch-Kincaid grade, "said"/"asked" tag share). Warns when the corpus looks like a poor match for the project's genre (e.g. essays calibrating a dialogue-heavy thriller). Any derived threshold overrides are written to `style-profile.suggested.yaml` — **never** to the active `style-profile.yaml`, and never looser than the genre default unless `--allow-loosen` is passed. Activating a suggestion is a manual copy/rename, by design.
+Compares a manuscript against a directory of the author's OWN writing (`--corpus <dir>`, `.md`/`.txt` files, 1,000-word minimum) and writes `work/baseline-report.md` — a metric-by-metric comparison (em-dash density, adverb density, filter-word density, "not X but Y" density, dialogue ratio, Flesch-Kincaid grade, "said"/"asked" tag share). Warns when the corpus looks like a poor match for the project's genre (e.g. essays calibrating a dialogue-heavy thriller). Derived threshold overrides cover the four single-value ceiling metrics (em-dash, adverb, filter-word, "not X but Y" density) — dialogue ratio and FK grade are two-sided bands, not ceilings, so they're compared and warned on but never turned into an override (see `_DERIVABLE_FIELDS`'s comment in `runner/corpus.py` for why). Overrides are written to `style-profile.suggested.yaml` — **never** to the active `style-profile.yaml`, and never looser than the genre default unless `--allow-loosen` is passed. Activating a suggestion is a manual copy/rename, by design.
+
+### `structure_variety` (via `check` or `gate`, not its own CLI verb)
+
+Enforces agents/book-writer.md's structural-diversity HARD RULE mechanically: reads the `meta structure=...` records `ledger` already parses from each chapter's self-report, and fails when two consecutive chapters share a structure, or one structure holds more than ~40% of chapters once 6+ are tracked. Not advisory — this rule is written as a hard rule, not a suggestion, and previously had every piece of machinery to enforce it except the enforcement itself. Skips cleanly until at least 2 chapters have a `meta` line.
+
+### `dynamic_range` (advisory; via `check` or `gate`)
+
+Reads the Genesis Floor score from every `evaluations/eval-chapter-N.md` HEADLINE line and flags when chapter-to-chapter scores are suspiciously uniform (coefficient of variation below a threshold, default 0.02, first-pass estimate — override with a positional arg). A per-chapter gate built from three simultaneous minimums (Floor >= 8.5, Average >= 9.0, no dimension < 8.0) selects for the manuscript with no weak chapter, which is mechanically also the manuscript with nothing pushed hard enough to risk becoming one; this check surfaces that failure mode at the manuscript level, the way the Genesis Score's Risk dimension (see `skills/book-genesis-codex/references/scoring/genesis-score-codex.md`) surfaces it per chapter. Needs at least 6 parsed chapter scores or it reports `skip`. Advisory by design: a flat score curve is a prompt to go read the manuscript, not proof the manuscript is bad — a genuinely, consistently excellent book would also trip this heuristic.
 
 ### `fingerprint save | compare`
 

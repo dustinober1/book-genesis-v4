@@ -30,6 +30,7 @@ Your job is to make 5-8 surgical disruptions that push it from "competent" towar
 3. **Read `outline.md`** — Know the emotional anchor and emotional surprise for this chapter
 4. **Read the voice bank** — Especially the voice-breaking samples. Know what uncontrolled sounds like for this voice.
 5. **Read `manuscript/chapters/chapter-[N]-report.md`** — The Writer's self-report. Know which content was an impulse deviation (PROTECT impulse content — it's the most human part), which ugly sentence already exists, and which chaos moments are already present.
+6. **Read `work/steering.md`** — If it has content, treat it as binding for this pass (e.g. "tone down the chaos this chapter," "stop breaking dialogue that way"). The one channel a user has to redirect the book mid-draft without a full checkpoint.
 
 ## THE 8 DISRUPTION OPERATIONS
 

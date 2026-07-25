@@ -9,10 +9,13 @@ English only, throughout. FUNCTION_WORDS, ADVERB_EXCLUDE, DIALOGUE_TAG_VERBS
 (discover.py), MAXIM_MARKERS/CONCRETE_MARKERS, and the phrase watchlists
 below are all English lexicons -- every check in this module, including
 word_echo and voice_drift, will silently mismeasure non-English prose rather
-than say so. This is a known, unresolved gap (this repo ships
-README.pt-BR.md and a Portuguese beta-reader skill) -- gates.py's
-check_macro is the one check in this package that currently guards on
-project.language; lint_manuscript does not yet, and shouldn't be assumed to.
+than say so. lint_manuscript itself does not guard on project.language (it
+has no access to PROJECT_STATE.yaml) -- gates.check_lint_check does, the
+same way gates.check_macro guards macro_manuscript: a non-English
+project.language makes the gate check return "skip" rather than a false
+"pass". Call lint_manuscript directly (e.g. via the `lint` CLI verb) on
+non-English prose and the result is still meaningless; the guard only
+protects the gate that blocks phase advancement.
 
 No external dependencies, matching the rest of runner/.
 """
@@ -78,6 +81,23 @@ DEFAULT_OPENER_WATCHLIST: Tuple[str, ...] = (
 # "not X but Y" - the binary-negation construction (base scan pattern #12).
 NOT_X_BUT_Y = re.compile(r"\bnot\s+[^.,;]{1,40}?\s+but\s+", re.IGNORECASE)
 
+# Pattern #11 (agents/book-evaluator.md's 20-pattern anti-AI scan):
+# "Explanatory Extension" -- an observation or simile that unpacks its own
+# comparison instead of leaving it raw ("her voice was flat, the kind of
+# flat that meant she had already decided"). skills/book-genesis-full and
+# book-orchestrator both stated this was already checked deterministically
+# by `runner/cli.py lint` -- it was not; this is that check, using the
+# grep recipe book-orchestrator.md's Step E previously ran by hand
+# (`grep -n 'not because\|not .*, but\|the kind of .* that'`).
+# Distinct from NOT_X_BUT_Y (pattern #12, Binary Negation Opener) even
+# though "not X, but Y" satisfies both -- the two patterns describe
+# different tells and the evaluator scores them separately, so this stays
+# a separate finding rather than being folded into not_x_but_y.
+EXPLANATORY_EXTENSION = re.compile(
+    r"\bnot because\b|\bnot\s+[^.,;]{1,40}?,\s*but\b|\bthe kind of\b[^.!?]{1,60}\bthat\b",
+    re.IGNORECASE,
+)
+
 # A closing line that resolves into a maxim rather than an image or action.
 # Heuristic, deliberately conservative: abstract nouns with no concrete anchor.
 MAXIM_MARKERS = re.compile(
@@ -94,6 +114,38 @@ CONCRETE_MARKERS = re.compile(
 
 SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 WORD = re.compile(r"\b[\w'-]+\b")
+
+# Filter words / psychic-distance verbs: "she saw the door open" routes the
+# reader's perception through the POV character's perception of it, instead
+# of just "the door opened" -- an extra layer of narration between reader
+# and event. Bestseller-DNA and evaluator pattern #10 ("Described emotions")
+# both name this by hand; this is the first mechanical count of it.
+# Pronoun-anchored so it fires regardless of cast; a name-anchored variant
+# would need the per-project cast list, which lint_manuscript already has
+# via detect_names for entity_variants.
+FILTER_VERBS: Tuple[str, ...] = (
+    "saw", "see", "sees", "seeing",
+    "heard", "hear", "hears", "hearing",
+    "felt", "feel", "feels", "feeling",
+    "noticed", "notice", "notices", "noticing",
+    "realized", "realize", "realizes", "realizing",
+    "realised", "realise", "realises", "realising",
+    "watched", "watch", "watches", "watching",
+    "wondered", "wonder", "wonders", "wondering",
+    "thought", "think", "thinks", "thinking",
+    "knew", "know", "knows", "knowing",
+)
+_FILTER_VERB_ALT = "|".join(FILTER_VERBS)
+# Deliberately NOT re.IGNORECASE: the verb alternation must stay lowercase
+# (a filter verb is never sentence-initial after its subject) and the
+# proper-name branch must require an actual capital, not "any letter" --
+# case-insensitive [A-Z] would match "the felt", "and knew", every ordinary
+# lowercase word before one of these common verbs, which is not the signal.
+FILTER_WORD = re.compile(
+    r"\b(?:I|[Hh]e|[Ss]he|[Tt]hey|[Ww]e|[A-Z][\w'’-]+)\s+(?:" + _FILTER_VERB_ALT + r")\b")
+# "found herself/himself/themselves Xing" is the same tell in gerund form.
+FILTER_FOUND_SELF = re.compile(
+    r"\bfound\s+(?:herself|himself|themselves|myself)\b", re.IGNORECASE)
 
 
 @dataclass
@@ -139,6 +191,16 @@ class Thresholds:
     em_dash_per_1k: float = 4.0          # reference draft: 9.6 (1 per 104 words)
     phrase_per_10k: float = 8.0          # e.g. "exactly" 44 in 23.8k = 18.5
     not_x_but_y_per_10k: float = 6.0
+
+    # Pattern #11, per agents/book-evaluator.md:443's genre-adjusted density
+    # table (literary 0.5/1k, memoir 0.6/1k, commercial 0.8/1k, prescriptive
+    # NF 1.0/1k). book-orchestrator.md:235 states a differently-scaled
+    # figure for the same pattern ("literary <=3/1k") -- an existing
+    # discrepancy between the two docs, not introduced here. This module
+    # follows book-evaluator.md's table since it is the canonical scoring
+    # source for the 20-pattern scan; reconciling the orchestrator's line
+    # is a separate doc fix.
+    explanatory_extension_per_1k: float = 0.6
     opener_share: float = 0.12           # max share of paragraphs one opener may hold
     maxim_ending_share: float = 0.67     # editor asked for >=1/3 non-maxim endings
     length_cv: float = 0.30              # chapter-length coefficient of variation floor
@@ -174,6 +236,13 @@ class Thresholds:
     # place it's actually measured instead of just asserted.
     adverb_per_1k: float = 10.5
 
+    # Filter words / psychic distance ("she saw", "he realized", "they
+    # noticed"). Unlike adverb_per_1k, no editorial report seeded this
+    # number -- it is a first-pass estimate pending per-project calibration,
+    # same caveat as echo_per_10k below. Treat a hit as a prompt to sample
+    # the flagged lines, not settled evidence.
+    filter_word_per_1k: float = 6.0
+
     # Dialogue tag variety: "said"/"asked" should dominate attribution tags.
     min_tag_sample: int = 20
     said_tag_share_min: float = 0.6
@@ -195,31 +264,46 @@ class Thresholds:
     # a raw run length, not a density.
     opener_repeat_run_min: int = 3
 
+    # Local (single-chapter) density tier. em_dash_density, not_x_but_y and
+    # adverb_density are all manuscript-wide averages -- a chapter running
+    # at several times the ceiling reads as machine-assisted on its own
+    # even while twenty clean chapters average it away. This multiplier
+    # sets how far above the manuscript-wide threshold a single chapter
+    # must run before it fails on its own; looser than the manuscript-wide
+    # bar on purpose; single chapters are noisier than a 60k-word average.
+    local_density_multiplier: float = 1.5
+    local_density_min_words: int = 500
+
     @staticmethod
     def for_profile(profile: str) -> "Thresholds":
         """Genre/length profiles. Literary prose tolerates fewer AI tells."""
         p = (profile or "").strip().lower()
         if p in {"literary", "literary fiction"}:
-            return Thresholds(em_dash_per_1k=3.0, phrase_per_10k=6.0)
+            return Thresholds(
+                em_dash_per_1k=3.0, phrase_per_10k=6.0,
+                explanatory_extension_per_1k=0.5)
         if p in {"commercial", "commercial fiction"}:
             return Thresholds(
                 em_dash_per_1k=6.0, phrase_per_10k=12.0,
                 fk_grade_min=4.0, fk_grade_max=8.0,
                 sentence_len_min=12.0, sentence_len_max=22.0,
-                dialogue_ratio_min=0.30, dialogue_ratio_max=0.62)
+                dialogue_ratio_min=0.30, dialogue_ratio_max=0.62,
+                explanatory_extension_per_1k=0.8)
         if p == "thriller":
             return Thresholds(
                 em_dash_per_1k=6.0, phrase_per_10k=12.0,
                 fk_grade_min=4.0, fk_grade_max=8.0,
                 sentence_len_min=10.0, sentence_len_max=20.0,
-                dialogue_ratio_min=0.30, dialogue_ratio_max=0.62)
+                dialogue_ratio_min=0.30, dialogue_ratio_max=0.62,
+                explanatory_extension_per_1k=0.8)
         if p in {"historical", "historical fiction", "biblical", "biblical fiction"}:
             # Matches the historical-fiction genre pack's override table.
             return Thresholds(
                 em_dash_per_1k=3.5, phrase_per_10k=7.0,
                 fk_grade_min=7.0, fk_grade_max=9.0,
                 sentence_len_min=16.0, sentence_len_max=24.0,
-                dialogue_ratio_min=0.25, dialogue_ratio_max=0.40)
+                dialogue_ratio_min=0.25, dialogue_ratio_max=0.40,
+                explanatory_extension_per_1k=0.5)
         return Thresholds()
 
     def with_overrides(self, overrides: Dict[str, float]) -> "Thresholds":
@@ -336,6 +420,7 @@ def lint_manuscript(
 
     raw_by_file = {p.name: p.read_text(encoding="utf-8") for p in files}
     stats = [analyze_chapter(n, r, openers) for n, r in raw_by_file.items()]
+    stripped_by_file = {n: _strip_markdown(r) for n, r in raw_by_file.items()}
     joined = _strip_markdown("\n\n".join(raw_by_file.values()))
     total_words = sum(s.words for s in stats)
     findings: List[Finding] = []
@@ -383,6 +468,71 @@ def lint_manuscript(
             f"<={th.not_x_but_y_per_10k:.1f}/10k",
             "Binary-negation construction. Keep only the strongest instances.",
         ))
+
+    # -- explanatory extension (Pattern #11) ---------------------------------
+    explanatory_n = len(EXPLANATORY_EXTENSION.findall(joined))
+    explanatory_1k = explanatory_n / per_1k
+    if explanatory_1k > th.explanatory_extension_per_1k:
+        findings.append(Finding(
+            "explanatory_extension", "fail",
+            f"{explanatory_n} instances, {explanatory_1k:.2f}/1k words",
+            f"<={th.explanatory_extension_per_1k:.2f}/1k",
+            "Pattern #11: an observation or simile that unpacks its own "
+            "comparison instead of leaving it raw. The pipeline's primary "
+            "AI fingerprint per agents/book-evaluator.md. Cut the "
+            "explanatory clause; let the image stand alone.",
+        ))
+
+    # -- local density tier (single chapter, not manuscript average) -------
+    # em_dash_density, not_x_but_y and adverb_density above are all
+    # manuscript-wide: a chapter running at several times the ceiling reads
+    # as machine-assisted on its own even while the other chapters average
+    # it away. Same failure mode as chapter-length uniformity and
+    # sentence-length monotony below, applied to these three densities.
+    local_mult = th.local_density_multiplier
+    for s in stats:
+        if s.words < th.local_density_min_words:
+            continue
+        chapter_text = stripped_by_file[s.name]
+
+        em_local = s.em_dashes / (s.words / 1000.0)
+        em_local_threshold = th.em_dash_per_1k * local_mult
+        if em_local > em_local_threshold:
+            findings.append(Finding(
+                "em_dash_density_local", "fail",
+                f"{s.name}: {s.em_dashes} em dashes, {em_local:.1f}/1k words",
+                f"<={em_local_threshold:.1f}/1k",
+                "This chapter alone runs well above the manuscript-wide em-dash "
+                "ceiling. A clean manuscript-wide average can hide one chapter "
+                "that reads as machine-assisted on its own.",
+            ))
+
+        chapter_words = s.words / 1000.0
+        nxby_local = len(NOT_X_BUT_Y.findall(chapter_text))
+        nxby_local_rate = nxby_local / max(chapter_words, 0.001)
+        nxby_local_threshold = (th.not_x_but_y_per_10k * 10) * local_mult
+        if nxby_local_rate > nxby_local_threshold:
+            findings.append(Finding(
+                "not_x_but_y_local", "fail",
+                f"{s.name}: {nxby_local} instances, {nxby_local_rate:.1f}/1k words",
+                f"<={nxby_local_threshold:.1f}/1k",
+                "This chapter alone runs well above the manuscript-wide "
+                "binary-negation ceiling.",
+            ))
+
+        adverb_n_local, adverb_total_local = adverb_density(chapter_text)
+        adverb_local_1k = (
+            (adverb_n_local / (adverb_total_local / 1000.0)) if adverb_total_local else 0.0
+        )
+        adverb_local_threshold = th.adverb_per_1k * local_mult
+        if adverb_local_1k > adverb_local_threshold:
+            findings.append(Finding(
+                "adverb_density_local", "warn",
+                f"{s.name}: {adverb_n_local} '-ly' words, {adverb_local_1k:.1f}/1k words",
+                f"<={adverb_local_threshold:.1f}/1k",
+                "This chapter alone runs well above the manuscript-wide adverb "
+                "ceiling. Heuristic count, same caveats as adverb_density.",
+            ))
 
     # -- paragraph opener monotony (finding 24) ----------------------------
     total_paras = sum(len(_paragraphs(_strip_markdown(r))) for r in raw_by_file.values())
@@ -459,7 +609,6 @@ def lint_manuscript(
     # -- discovered phrase repetition --------------------------------------
     # The watchlist above only finds tics someone predicted. This finds the
     # book's own, which is where the real damage usually is.
-    stripped_by_file = {n: _strip_markdown(r) for n, r in raw_by_file.items()}
     ngram_hits = repeated_ngrams(
         stripped_by_file,
         min_count=th.ngram_min_count,
@@ -630,6 +779,20 @@ def lint_manuscript(
             "Heuristic ('-ly' words minus a stopword list of non-adverbs like "
             "'family', 'only', 'likely'), so treat as a prompt to sample, not "
             "an exact count.",
+        ))
+
+    # -- filter words / psychic distance -------------------------------------
+    filter_hits = len(FILTER_WORD.findall(joined)) + len(FILTER_FOUND_SELF.findall(joined))
+    filter_1k = filter_hits / per_1k
+    if filter_1k > th.filter_word_per_1k:
+        findings.append(Finding(
+            "filter_word_density", "warn",
+            f"{filter_hits} instances, {filter_1k:.1f}/1k words",
+            f"<={th.filter_word_per_1k:.1f}/1k",
+            "\"She saw the door open\" routes the reader through the POV "
+            "character's perception of the event instead of the event itself "
+            "-- an extra layer between reader and scene. Cut the filter verb "
+            "and let the sensation stand on its own (\"the door opened\").",
         ))
 
     # -- dialogue tag variety -------------------------------------------------

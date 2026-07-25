@@ -523,9 +523,24 @@ def absence_gaps(
 # --------------------------------------------------------------------------
 
 DIALOGUE = re.compile(r"[“\"]([^”\"]{2,})[”\"]")
+# Three attribution shapes, all anchored against the surrounding 60 chars of
+# prose (see dialogue_by_speaker). All three reuse the full DIALOGUE_TAG_VERBS
+# list, not a truncated subset -- a name attributed via "murmured" or
+# "protested" is exactly as real a speaker as one attributed via "said".
+#
+# 1. Verb-before-name, right after the closing quote: '"...," said Mary.'
 ATTRIB_AFTER = re.compile(
-    r"^[,\.\s]*(?:said|asked|replied|answered|told|whispered|shouted)\s+([A-Z][\w'’-]+)")
-ATTRIB_BEFORE = re.compile(r"([A-Z][\w'’-]+)\s+(?:said|asked|replied|answered)[,:]?\s*$")
+    r"^[,\.\s]*(?:" + _TAG_VERB_ALT + r")\s+([A-Z][\w'’-]+)")
+# 2. Name-before-verb, right before the opening quote: 'Mary said, "..."'
+ATTRIB_BEFORE = re.compile(
+    r"([A-Z][\w'’-]+)\s+(?:" + _TAG_VERB_ALT + r")[,:]?\s*$")
+# 3. Name-before-verb, right after the closing quote: '"...," Mary said.'
+# This is the dominant attribution order in English prose and was missing
+# entirely -- every check built on dialogue_by_speaker (voice_collisions,
+# speaker_drift, the voice-lexicon gate, `structure`'s per-speaker metrics)
+# silently measured nothing on a normally-punctuated manuscript.
+ATTRIB_AFTER_NAME = re.compile(
+    r"^[,\.\s]*([A-Z][\w'’-]+)\s+(?:" + _TAG_VERB_ALT + r")\b")
 
 
 @dataclass
@@ -564,9 +579,12 @@ def dialogue_by_speaker(text: str) -> Tuple[Dict[str, List[str]], int]:
             after = para[m.end():m.end() + 60]
             before = para[max(0, m.start() - 60):m.start()]
             am = ATTRIB_AFTER.match(after)
+            nm = ATTRIB_AFTER_NAME.match(after)
             bm = ATTRIB_BEFORE.search(before)
             if am:
                 current = am.group(1)
+            elif nm:
+                current = nm.group(1)
             elif bm:
                 current = bm.group(1)
             # else: keep `current` - continuation of the same speech.

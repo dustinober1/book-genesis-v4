@@ -29,7 +29,8 @@ idea or manuscript
 | `book-swarm-panel` | Runs MiroFish-style clean-room reader swarms, heatmaps, and revision tickets. |
 | `editorial-package` | Produces logline, query, synopsis, cover brief, ARC packet, and submission assets. |
 | `copy-editing` | Tightens prose, grammar, clarity, consistency, and final polish. |
-| `humanizer` | Removes mechanical texture and restores voice, cadence, and emotional specificity. |
+| `prose-de-tell` | Removes deep AI-writing patterns from manuscript prose (fiction-scoped). |
+| `humanizer` | Removes mechanical texture from non-fiction, marketing, and editorial copy — not the manuscript itself. |
 
 ## What changed
 

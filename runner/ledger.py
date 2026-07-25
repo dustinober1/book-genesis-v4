@@ -53,6 +53,14 @@ CHAPTER_FILE = re.compile(r"^chapter-(\d+)\.md$", re.IGNORECASE)
 _META_RECORD = re.compile(r"^\s*meta\s+(.*)$", re.MULTILINE)
 _PAIR = re.compile(r'(\w+)\s*=\s*("(?:[^"\\]|\\.)*"|\S+)')
 
+# Motif bank: same flat-record grammar as texture.py's texture-bank.md
+# (`RECORD`/`PAIR` there), redefined locally rather than imported -- every
+# module in this package that reads a flat-record file (texture.py,
+# humanpass.py) owns its own copy of this trivial grammar rather than
+# import-coupling to a sibling module for a two-line regex.
+_MOTIF_RECORD = re.compile(r"^\s*(\w+)\s+(.*)$")
+MOTIF_BANK_NAME = "foundation/motifs.md"
+
 # "like a lattice", "as if the walls", "the way grief settles" -- trimmed at
 # the first clause boundary so the vehicle stays a short, matchable phrase
 # rather than swallowing the rest of the sentence.
@@ -106,6 +114,62 @@ def chapter_opening_word(raw: str) -> Optional[str]:
 
 
 @dataclass
+class MotifEntry:
+    id: str
+    term: str
+    line: int = 0
+
+
+def parse_motif_bank(text: str) -> Tuple[List[MotifEntry], List[str]]:
+    """Parse foundation/motifs.md: `motif id=lamp term="the lamp"`. Never
+    raises -- unparsable lines are collected as errors, same contract as
+    parse_texture_bank and parse_timeline. A deliberate recurring image is
+    the opposite of an accidental tic: the ledger's job is to stop the
+    SECOND accidental use, never the planned fifth appearance of a motif,
+    so any simile vehicle or chapter-opening word matching a motif's term
+    is excluded from retirement (see build_ledger)."""
+    entries: List[MotifEntry] = []
+    errors: List[str] = []
+    seen_ids: Dict[str, int] = {}
+
+    for lineno, raw in enumerate(text.splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        m = _MOTIF_RECORD.match(line)
+        if not m:
+            errors.append(f"line {lineno}: unparsable record: {line!r}")
+            continue
+        record_kind, rest = m.group(1), m.group(2)
+        if record_kind != "motif":
+            errors.append(f"line {lineno}: unknown record type {record_kind!r} (expected 'motif')")
+            continue
+        fields = {k: _unquote(v) for k, v in _PAIR.findall(rest)}
+        entry_id = fields.get("id", "")
+        term = fields.get("term", "")
+        if not entry_id:
+            errors.append(f"line {lineno}: motif record missing id=")
+            continue
+        if not term:
+            errors.append(f"line {lineno}: motif record {entry_id!r} missing term=")
+            continue
+        if entry_id in seen_ids:
+            errors.append(
+                f"line {lineno}: duplicate motif id {entry_id!r} "
+                f"(first seen at line {seen_ids[entry_id]})")
+            continue
+        seen_ids[entry_id] = lineno
+        entries.append(MotifEntry(id=entry_id, term=term, line=lineno))
+
+    return entries, errors
+
+
+def _matches_any_motif(text: str, motif_terms: List[str]) -> bool:
+    lowered = text.lower()
+    return any(term in lowered for term in motif_terms)
+
+
+@dataclass
 class LedgerReport:
     chapters_scanned: List[str] = field(default_factory=list)
     phrases: List[Tuple[str, int]] = field(default_factory=list)          # (phrase, count)
@@ -115,6 +179,8 @@ class LedgerReport:
     structural_approaches: List[Tuple[str, str]] = field(default_factory=list)  # (chapter, structure)
     hooks: List[Tuple[str, str]] = field(default_factory=list)            # (chapter, hook)
     chapters_missing_meta: List[str] = field(default_factory=list)
+    motifs_exempted: List[str] = field(default_factory=list)  # motif terms loaded, for transparency
+    motif_bank_errors: List[str] = field(default_factory=list)
 
 
 def build_ledger(
@@ -123,6 +189,7 @@ def build_ledger(
     report_dir: Optional[Path] = None,
     ngram_min_count: int = 2,
     ngram_min_per_10k: float = 1.0,
+    motif_bank_path: Optional[Path] = None,
 ) -> LedgerReport:
     """Scan every finalized chapter and build the retired-resource ledger.
 
@@ -131,6 +198,14 @@ def build_ledger(
     this exists to catch a phrase the *next* chapter might reach for again
     -- a single distinctive use is already worth listing, since the whole
     point is to prevent the second use, not react to it.
+
+    `motif_bank_path` is optional overlay, same contract as texture.py's
+    texture-bank.md: absent is the normal case and a no-op, not an error.
+    When present (foundation/motifs.md by convention -- see MOTIF_BANK_NAME),
+    any simile vehicle or chapter-opening word matching a declared motif
+    term is excluded from `similes`/`opening_words` -- a deliberate
+    recurring image is the opposite of an accidental tic, and this ledger's
+    only job is to stop the second accidental use.
     """
     report_dir = report_dir or chapter_dir
     chapter_files = sorted(
@@ -146,15 +221,26 @@ def build_ledger(
 
     report = LedgerReport(chapters_scanned=sorted(raw_by_file))
 
+    motif_terms: List[str] = []
+    if motif_bank_path is not None and motif_bank_path.is_file():
+        motif_entries, motif_errors = parse_motif_bank(
+            motif_bank_path.read_text(encoding="utf-8"))
+        motif_terms = [e.term.lower() for e in motif_entries]
+        report.motifs_exempted = [e.term for e in motif_entries]
+        report.motif_bank_errors = motif_errors
+
     # -- phrases (looser threshold than lint's discovered-repetition) ------
     ngram_hits = repeated_ngrams(
         stripped_by_file, min_count=ngram_min_count, min_per_10k=ngram_min_per_10k)
-    report.phrases = [(h.phrase, h.count) for h in ngram_hits]
+    report.phrases = [(h.phrase, h.count) for h in ngram_hits
+                       if not _matches_any_motif(h.phrase, motif_terms)]
 
     # -- simile vehicles -----------------------------------------------------
     simile_counts: Dict[str, int] = {}
     for text in stripped_by_file.values():
         for vehicle in find_simile_vehicles(text):
+            if _matches_any_motif(vehicle, motif_terms):
+                continue
             simile_counts[vehicle] = simile_counts.get(vehicle, 0) + 1
     report.similes = sorted(simile_counts.items(), key=lambda kv: -kv[1])
 
@@ -162,7 +248,7 @@ def build_ledger(
     opening_chapters: Dict[str, List[str]] = {}
     for name, raw in raw_by_file.items():
         word = chapter_opening_word(raw)
-        if word:
+        if word and not _matches_any_motif(word, motif_terms):
             opening_chapters.setdefault(word, []).append(name)
     report.opening_words = sorted(opening_chapters.items(), key=lambda kv: -len(kv[1]))
 
@@ -199,6 +285,12 @@ def render_ledger(report: LedgerReport) -> str:
         "chapter never repeats what an earlier one already spent.")
     lines.append("")
     lines.append(f"- Chapters scanned: {len(report.chapters_scanned)}")
+    if report.motifs_exempted:
+        lines.append(
+            f"- Motifs exempted from retirement ({len(report.motifs_exempted)}): "
+            + ", ".join(f'"{t}"' for t in report.motifs_exempted))
+    if report.motif_bank_errors:
+        lines.append(f"- Motif bank parse errors: {len(report.motif_bank_errors)} (see below)")
     lines.append("")
 
     if not report.chapters_scanned:
@@ -257,6 +349,13 @@ def render_ledger(report: LedgerReport) -> str:
         lines.append("")
         for name in report.chapters_missing_meta:
             lines.append(f"- {name}")
+        lines.append("")
+
+    if report.motif_bank_errors:
+        lines.append(f"## Motif bank parse errors ({MOTIF_BANK_NAME})")
+        lines.append("")
+        for err in report.motif_bank_errors:
+            lines.append(f"- {err}")
         lines.append("")
 
     return "\n".join(lines)

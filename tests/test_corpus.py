@@ -39,6 +39,18 @@ class ComputeStatsTests(unittest.TestCase):
         stats = compute_stats(_words(100))
         self.assertIsNone(stats.said_tag_share)
 
+    def test_measures_filter_word_density(self) -> None:
+        text = "She saw the door open. She heard the wind rise. She felt the cold. " * 20
+        stats = compute_stats(text)
+        self.assertGreater(stats.filter_word_per_1k, 0)
+
+    def test_measures_not_x_but_y_density(self) -> None:
+        # No comma between "not" and "but": NOT_X_BUT_Y excludes [.,;] inside
+        # the span, same construction runner/lint.py's own tests use.
+        text = "He was not angry but something colder and harder to name. " * 20
+        stats = compute_stats(text)
+        self.assertGreater(stats.not_x_but_y_per_10k, 0)
+
     def test_comments_excluded_from_word_count(self) -> None:
         plain = _words(50)
         with_comment = "<!-- Word count: 9000 | Target: 9000 -->\n\n" + plain
@@ -50,27 +62,34 @@ class DeriveOverridesTests(unittest.TestCase):
         from runner.corpus import CorpusStats
         low = CorpusStats(
             total_words=5000, em_dash_per_1k=0.5, adverb_per_1k=2.0,
+            filter_word_per_1k=0.5, not_x_but_y_per_10k=0.5,
             dialogue_ratio=0.2, fk_grade=6.0, said_tag_share=0.9)
         overrides, warnings = derive_overrides(low, profile="commercial")
         self.assertIn("em_dash_per_1k", overrides)
         self.assertIn("adverb_per_1k", overrides)
+        self.assertIn("filter_word_per_1k", overrides)
+        self.assertIn("not_x_but_y_per_10k", overrides)
         self.assertEqual([], warnings)
         base = Thresholds.for_profile("commercial")
         self.assertLess(overrides["em_dash_per_1k"], base.em_dash_per_1k)
+        self.assertLess(overrides["filter_word_per_1k"], base.filter_word_per_1k)
+        self.assertLess(overrides["not_x_but_y_per_10k"], base.not_x_but_y_per_10k)
 
     def test_looser_measured_rate_warns_and_is_not_applied(self) -> None:
         from runner.corpus import CorpusStats
         high = CorpusStats(
             total_words=5000, em_dash_per_1k=50.0, adverb_per_1k=50.0,
+            filter_word_per_1k=50.0, not_x_but_y_per_10k=50.0,
             dialogue_ratio=0.2, fk_grade=6.0, said_tag_share=0.9)
         overrides, warnings = derive_overrides(high, profile="commercial")
         self.assertEqual({}, overrides)
-        self.assertEqual(2, len(warnings))
+        self.assertEqual(4, len(warnings))
 
     def test_allow_loosen_applies_looser_rate(self) -> None:
         from runner.corpus import CorpusStats
         high = CorpusStats(
             total_words=5000, em_dash_per_1k=50.0, adverb_per_1k=50.0,
+            filter_word_per_1k=50.0, not_x_but_y_per_10k=50.0,
             dialogue_ratio=0.2, fk_grade=6.0, said_tag_share=0.9)
         overrides, warnings = derive_overrides(high, profile="commercial", allow_loosen=True)
         self.assertIn("em_dash_per_1k", overrides)

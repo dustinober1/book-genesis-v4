@@ -40,6 +40,26 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual("Phase 7: Production", phases[-1].label)
         self.assertEqual(8, len(phases))
 
+    def test_craft_mode_manifest_declares_deterministic_checks(self) -> None:
+        # Regression guard: Craft Mode's manifest.yaml (skills/book-genesis/,
+        # the pipeline README.md recommends most users run instead of the
+        # full book-genesis-full) used to declare zero `checks:` anywhere --
+        # advance_phase/gate ran no lint/proof/structure_variety at all for
+        # it, only output-file-existence gating. This confirms the drafting
+        # and adversarial-audit phases now carry the same check set the
+        # codex manifest does.
+        from runner import filesystem as _filesystem
+
+        craft_manifest = REPO_ROOT / "skills" / "book-genesis" / "references" / "pipeline" / "manifest.yaml"
+        self.assertTrue(craft_manifest.exists())
+        entries = _filesystem._load_simple_yaml_map(craft_manifest)  # noqa: SLF001
+        drafting_checks = entries["phase_3_drafting"].get("checks", [])
+        audit_checks = entries["phase_4_adversarial_audit"].get("checks", [])
+        self.assertIn("lint", drafting_checks)
+        self.assertIn("structure_variety", drafting_checks)
+        self.assertIn("lint", audit_checks)
+        self.assertIn("structure_variety", audit_checks)
+
     def test_market_level_skills_are_packaged(self) -> None:
         bestseller = REPO_ROOT / "skills" / "book-bestseller-studio" / "SKILL.md"
         swarm = REPO_ROOT / "skills" / "book-swarm-panel" / "SKILL.md"
@@ -73,6 +93,7 @@ class RunnerTests(unittest.TestCase):
         self.assertTrue((self.tempdir / "manuscript" / "chapters").is_dir())
         self.assertTrue((self.tempdir / "evaluations").is_dir())
         self.assertTrue((self.tempdir / "delivery").is_dir())
+        self.assertTrue((self.tempdir / "work" / "steering.md").exists())
         summary = load_state_summary(self.tempdir)
         self.assertEqual("codex", summary["adapter"])
         self.assertEqual("Phase 0: Intake", summary["current_phase"])
@@ -343,6 +364,66 @@ class RunnerTests(unittest.TestCase):
         )
         self.assertEqual(0, result.returncode, msg=result.stderr)
         self.assertTrue((project / "PROJECT_STATE.yaml").exists())
+
+    def test_cli_check_runs_a_single_registered_check_standalone(self) -> None:
+        # gates.run_check doesn't need a manifest/Phase -- `check` exposes
+        # that directly, for pipelines (book-orchestrator.md) that dispatch
+        # individual checks instead of going through the codex `gate`
+        # command's Phase-based manifest.
+        project = self.tempdir / "cli-check-project"
+        (project / "manuscript" / "chapters").mkdir(parents=True)
+        result = subprocess.run(
+            [sys.executable, str(REPO_ROOT / "runner" / "cli.py"), "check", "lint", str(project)],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(0, result.returncode, msg=result.stderr)
+        self.assertIn("lint: SKIP", result.stdout)
+
+    def test_cli_check_blocking_failure_is_nonzero_exit(self) -> None:
+        project = self.tempdir / "cli-check-fail-project"
+        chapters = project / "manuscript" / "chapters"
+        chapters.mkdir(parents=True)
+        (chapters / "chapter-1.md").write_text("# Chapter 1\n\nProse.\n", encoding="utf-8")
+        (chapters / "chapter-1-report.md").write_text(
+            "meta chapter=1 structure=linear hook=image\n", encoding="utf-8")
+        (chapters / "chapter-2.md").write_text("# Chapter 2\n\nProse.\n", encoding="utf-8")
+        (chapters / "chapter-2-report.md").write_text(
+            "meta chapter=2 structure=linear hook=image\n", encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, str(REPO_ROOT / "runner" / "cli.py"),
+             "check", "structure_variety", str(project)],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(1, result.returncode)
+        self.assertIn("structure_variety: FAIL", result.stdout)
+
+    def test_cli_check_advisory_failure_is_zero_exit(self) -> None:
+        project = self.tempdir / "cli-check-advisory-project"
+        evals = project / "evaluations"
+        evals.mkdir(parents=True)
+        for i in range(1, 7):
+            (evals / f"eval-chapter-{i}.md").write_text(
+                "## HEADLINE\n**Genesis Floor:** 8.5 | **Genesis Average:** 8.8\n",
+                encoding="utf-8",
+            )
+        result = subprocess.run(
+            [sys.executable, str(REPO_ROOT / "runner" / "cli.py"),
+             "check", "dynamic_range", str(project)],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(0, result.returncode, msg=result.stderr)
+        self.assertIn("dynamic_range: FAIL (advisory)", result.stdout)
+
+    def test_cli_check_unknown_token_errors(self) -> None:
+        project = self.tempdir / "cli-check-unknown-project"
+        (project / "manuscript" / "chapters").mkdir(parents=True)
+        result = subprocess.run(
+            [sys.executable, str(REPO_ROOT / "runner" / "cli.py"),
+             "check", "not_a_real_check", str(project)],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(1, result.returncode)
+        self.assertIn("not_a_real_check: ERROR", result.stdout)
 
 
 if __name__ == "__main__":

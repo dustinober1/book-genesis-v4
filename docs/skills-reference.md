@@ -8,7 +8,8 @@ Market-level add-ons live beside the universal core. The current public position
 - `skills/book-swarm-panel/`: MiroFish-style clean-room simulated reader swarms, public-opinion diagnostics, niche-risk scouting, and revision tickets.
 - `skills/literary-agent-panel/`: simulated literary agent, acquiring editor, bookseller, and target-reader review.
 - `skills/copy-editing/`: prose clarity, grammar, repetition, consistency, and final polish.
-- `skills/humanizer/`: voice texture, cadence variation, emotional specificity, and anti-mechanical prose.
+- `skills/prose-de-tell/`: deep AI-writing patterns in NOVEL manuscript prose (anti-AI scan patterns #11-20 — the ones that survive a surface-clean pass).
+- `skills/humanizer/`: voice texture and anti-mechanical prose for NON-FICTION, marketing, and editorial copy — not the manuscript itself; use `prose-de-tell` there.
 
 Book Bestseller Studio includes `references/agent-registry.yaml`, a specialist team covering market research, worldbuilding, character architecture, theme, plot, pacing, prose writing, continuity, swarm, adversarial audit, revision, scoring, package, viral framing, and launch.
 

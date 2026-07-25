@@ -10,10 +10,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from runner.ledger import (  # noqa: E402
+    MotifEntry,
     build_ledger,
     chapter_opening_word,
     find_simile_vehicles,
     parse_meta_line,
+    parse_motif_bank,
     render_ledger,
 )
 
@@ -165,6 +167,79 @@ class LedgerManuscriptTests(unittest.TestCase):
     def test_render_ledger_empty_manuscript(self) -> None:
         text = render_ledger(build_ledger(self.chapters))
         self.assertIn("No finalized chapters yet.", text)
+
+    def test_motif_exempts_matching_simile_from_retirement(self) -> None:
+        self._write_chapter(1, "The lamp flickered like a warning.")
+        self._write_chapter(2, "The lamp flickered like a warning again.")
+        motif_bank = self.tempdir / "motifs.md"
+        motif_bank.write_text('motif id=lamp term="like a warning"\n', encoding="utf-8")
+
+        without = build_ledger(self.chapters)
+        self.assertTrue(without.similes, "sanity: simile is retired without a motif bank")
+
+        with_motif = build_ledger(self.chapters, motif_bank_path=motif_bank)
+        self.assertEqual([], with_motif.similes)
+        self.assertEqual(["like a warning"], with_motif.motifs_exempted)
+
+    def test_motif_exempts_matching_opening_word(self) -> None:
+        self._write_chapter(1, "Mira stood at the door.")
+        self._write_chapter(2, "Mira watched the rain fall.")
+        motif_bank = self.tempdir / "motifs.md"
+        motif_bank.write_text('motif id=mira term="mira"\n', encoding="utf-8")
+
+        report = build_ledger(self.chapters, motif_bank_path=motif_bank)
+        self.assertEqual([], report.opening_words)
+
+    def test_missing_motif_bank_path_is_a_noop(self) -> None:
+        self._write_chapter(1, "The lamp flickered like a warning.")
+        report = build_ledger(
+            self.chapters, motif_bank_path=self.tempdir / "does-not-exist.md")
+        self.assertTrue(report.similes)
+        self.assertEqual([], report.motifs_exempted)
+
+    def test_render_ledger_lists_motif_exemptions(self) -> None:
+        self._write_chapter(1, "The lamp flickered like a warning.")
+        motif_bank = self.tempdir / "motifs.md"
+        motif_bank.write_text('motif id=lamp term="like a warning"\n', encoding="utf-8")
+        text = render_ledger(build_ledger(self.chapters, motif_bank_path=motif_bank))
+        self.assertIn('"like a warning"', text)
+
+
+class MotifBankParsingTests(unittest.TestCase):
+    def test_parses_a_clean_entry(self) -> None:
+        entries, errors = parse_motif_bank('motif id=lamp term="the lamp"\n')
+        self.assertEqual([], errors)
+        self.assertEqual([MotifEntry(id="lamp", term="the lamp", line=1)], entries)
+
+    def test_comments_and_blank_lines_ignored(self) -> None:
+        text = '# a comment\n\nmotif id=lamp term="the lamp"\n'
+        entries, errors = parse_motif_bank(text)
+        self.assertEqual(1, len(entries))
+        self.assertEqual([], errors)
+
+    def test_missing_id_reported(self) -> None:
+        _entries, errors = parse_motif_bank('motif term="the lamp"\n')
+        self.assertTrue(any("missing id=" in e for e in errors))
+
+    def test_missing_term_reported(self) -> None:
+        _entries, errors = parse_motif_bank("motif id=lamp\n")
+        self.assertTrue(any("missing term=" in e for e in errors))
+
+    def test_duplicate_id_reported(self) -> None:
+        text = 'motif id=lamp term="the lamp"\nmotif id=lamp term="the other lamp"\n'
+        entries, errors = parse_motif_bank(text)
+        self.assertEqual(1, len(entries))
+        self.assertTrue(any("duplicate motif id" in e for e in errors))
+
+    def test_unknown_record_type_reported(self) -> None:
+        _entries, errors = parse_motif_bank('texture id=lamp term="the lamp"\n')
+        self.assertTrue(any("unknown record type" in e for e in errors))
+
+    def test_unparsable_line_reported_not_raised(self) -> None:
+        # A single token with no trailing whitespace-separated payload does
+        # not match `^\s*(\w+)\s+(.*)$` at all (needs a "kind rest" shape).
+        _entries, errors = parse_motif_bank("justoneword\n")
+        self.assertTrue(any("unparsable record" in e for e in errors))
 
 
 if __name__ == "__main__":

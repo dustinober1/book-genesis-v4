@@ -1,6 +1,6 @@
 ---
 name: book-bestseller-studio
-description: Use when the user wants a complete book-production system aimed at commercial viability, bestseller positioning, agent/editor readiness, or launch readiness. Orchestrates book-genesis, book-researcher, literary-agent-panel, book-editor, copy-editing, humanizer, editorial-package, launch-strategy, and content-strategy.
+description: Use when the user wants a complete book-production system aimed at commercial viability, bestseller positioning, agent/editor readiness, or launch readiness. Orchestrates book-genesis, book-researcher, literary-agent-panel, book-editor, copy-editing, prose-de-tell, humanizer, editorial-package, launch-strategy, and content-strategy.
 ---
 
 # Book Bestseller Studio
@@ -25,7 +25,8 @@ Use this when the user says things like:
 - `literary-agent-panel`: simulated agent/editor/bookseller review for market acceptance.
 - `book-editor`: surgical revision by mode after evaluation.
 - `copy-editing`: final language cleanup.
-- `humanizer`: remove synthetic phrasing and restore lived voice.
+- `prose-de-tell`: remove deep AI patterns from MANUSCRIPT prose (fiction-scoped).
+- `humanizer`: remove synthetic phrasing from non-fiction assets — query letters, back-cover copy, launch/content material. Not for the manuscript itself; see `prose-de-tell`.
 - `editorial-package`: logline, back-cover copy, synopsis, query letter, cover brief.
 - `launch-strategy`: go-to-market, offer, launch calendar, proof-driven positioning.
 - `content-strategy`: audience-building and content plan around the book.
@@ -57,7 +58,7 @@ Default project layout:
 4. Run `book-swarm-panel` when the project needs many fictional readers, niche/sensitivity-risk scouting, public-opinion reaction, or package-framing tests.
 5. Run `book-genesis` adversarial audit and Genesis Score.
 6. Use `book-editor` only against specific findings. Pick mode: structural, connective, prose-texture, rag-rewrite, or factual.
-7. Use `humanizer` and `copy-editing` after structure is stable.
+7. Use `prose-de-tell` and `copy-editing` on the manuscript after structure is stable. Save `humanizer` for non-fiction assets produced later (query letter, back-cover copy, launch/content material) — not the manuscript itself.
 8. Run `literary-agent-panel` and/or `book-swarm-panel` again after revision.
 9. Run `editorial-package` only after manuscript passes product gates.
 10. Run `launch-strategy` and `content-strategy` for public-launch readiness.

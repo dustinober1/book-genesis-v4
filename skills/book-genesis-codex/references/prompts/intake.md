@@ -24,6 +24,13 @@ Present all of these together. Offer the recommended default in each so the user
 6. **Content boundaries** — anything the book must not depict on the page.
 7. **Ending posture** — resolved, ambiguous, or bleak.
 8. **Autonomy level** — see Autonomy below. Default: Guided.
+9. **Author Card (optional)** — everything upstream of this question is model-answerable; this one is not, and the pipeline has no other way to get it. Ask, but make clearly skippable: (a) a place you know down to the smell, the sound, the specific light; (b) a job or skill you've actually done with your hands; (c) two or three things you refuse to write into this book; (d) two comp titles whose PROSE you want this to sound like (distinct from Phase 1's market comps, which are chosen for positioning, not voice); (e) do you have your own existing writing you'd let this pipeline read to calibrate its defaults against your rhythm — if yes, a directory path. If the user answers, fold (a)-(d) into `artifacts/03-characters.md`'s voice material at Phase 1 as concrete, non-invented detail, and record (e) as `project.author_corpus` in `PROJECT_STATE.yaml`. If the user skips this question or replies "defaults," proceed immediately — this is the one questionnaire item that is genuinely optional, not just answerable-by-default.
+
+If `project.author_corpus` is set, run once after intake completes:
+```
+python3 -m runner.cli baseline <project> --corpus <project.author_corpus> --profile <genre> --out work/baseline-report.md
+```
+Surface the resulting comparison table to the user before Phase 1 begins — the calibration should be visible up front, not buried in a file they may never open. If it produces `style-profile.suggested.yaml`, say so and note that adopting it is a manual rename, never automatic.
 
 If the project matches a genre pack (`knowledge/genre-packs/`), ask that pack's `## Required Fields` questions in the same batch. For historical fiction that means theological/interpretive stance and the momentum engine.
 

@@ -114,6 +114,6 @@ Use these only when relevant and already available:
 
 - `copy-editing` for prose-level cleanup
 - `book-swarm-panel` for MiroFish-style simulated reader swarms, niche-risk scouting, public-opinion tests, heatmaps, interviews, and revision tickets
-- `humanizer` for less synthetic phrasing
+- `prose-de-tell` for less synthetic phrasing in manuscript prose (fiction-scoped; use `humanizer` instead for non-fiction assets like query letters or back-cover copy)
 - `launch-strategy` or `content-strategy` for go-to-market assets
 - `imagegen` or cover-specific workflows for cover ideation

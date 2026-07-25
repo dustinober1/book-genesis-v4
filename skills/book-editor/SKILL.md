@@ -323,29 +323,36 @@ Read the engagement type from foundation.md. Revisions should align with the boo
 
 ## Pre-Delivery Self-Scan — MANDATORY
 
-Before you write the revised chapter to disk, you MUST run a deterministic self-scan. This is not optional. The pipeline has been bitten three times by Pattern #10 residuals slipping past human review.
+Before you write the revised chapter to disk, you MUST run a deterministic self-scan. This is not optional. The pipeline has been bitten three times by Pattern #10 (Described Emotions / filter words) residuals slipping past human review.
 
-### Step 1 — Run prose-audit on your output
+### Step 1 — Run the shipped runner on your output, before AND after
 
-```bash
-python ~/Desktop/books/bestseller-db/scripts/prose-audit.py \
-  --file {project_dir}/chapters/chapter-NN.md \
-  --genre {genre} --strict
-```
-
-Exit code 0 = ship. Exit code 1 = at least one density threshold breached.
-
-**If prose-audit exits 1 in `prose-texture` or `rag-rewrite` mode → FIX AND RESCAN. Do not deliver a chapter that regressed the density metrics you were dispatched to improve.**
-
-In `structural`, `connective`, or `factual` modes, density regression is tolerable (you were not hired for prose craft in this pass), but log the breach in the revision report.
-
-### Step 2 — Eyeball grep for Pattern #10 residuals
+`~/Desktop/books/bestseller-db/scripts/prose-audit.py` (this step's script in older copies of this file) is a personal path on one machine — it does not exist in this repo and never shipped with it. The equivalent deterministic checks are `runner/lint.py` and `runner/proof.py`, invoked via `runner/cli.py`:
 
 ```bash
-grep -nE "(Marcos|Ele|Ela|Eles|Elas) (registrou|sentiu|classificou|percebeu|observou|notou|reconheceu|identificou|processou|calculou)" {project_dir}/chapters/chapter-NN.md
+# BEFORE you edit — capture the baseline so you have something to compare against.
+python3 runner/cli.py lint {project_dir} --profile {genre} --out /tmp/lint-before.md
+
+# ... make your revision ...
+
+# AFTER — rerun the same command.
+python3 runner/cli.py lint {project_dir} --profile {genre} --out /tmp/lint-after.md
+python3 runner/cli.py proof {project_dir}
 ```
 
-Every hit = decide: kill it, or justify it (sometimes "sentiu" is the right word and the audit script cannot tell). Zero unjustified hits before delivery.
+(If you installed via `install.sh`/`install.ps1` rather than working in a repo checkout, the runner lives at `~/.claude/book-genesis-runner/runner/cli.py` — see `docs/runner.md`.)
+
+**Exit condition: zero NEW `fail`-severity findings on this chapter versus the "before" report.** Compare the two lint reports' `fail` rows for this chapter specifically — a finding that was already present before your edit and that you weren't dispatched to fix is not a new regression; a finding that appears only in the "after" report is one your edit introduced, and you must fix it before delivering.
+
+**If you were specifically dispatched to fix a density finding (em-dash, adverb, filter-word, explanatory-extension, etc.) in `prose-texture` or `rag-rewrite` mode → the "after" report must show a real count reduction on that specific finding. Do not deliver a chapter that regressed the exact metric you were dispatched to improve.**
+
+In `structural`, `connective`, or `factual` modes, density regression is tolerable (you were not hired for prose craft in this pass) as long as it isn't a NEW finding — but log any regression in the revision report regardless.
+
+### Step 2 — Pattern #10 (Described Emotions / filter words): read the lint findings, don't re-derive them
+
+`runner/lint.py`'s `filter_word_density` finding (part of the same `lint` run above) already measures exactly this pattern — a POV character routed through a perception verb instead of the event standing on its own ("she felt the door open" vs. "the door opened"). Read that finding's citations rather than writing a fresh grep for it. It is pronoun-and-cast-name agnostic and English-only (see `runner/lint.py`'s own module docstring on language scope); for a non-English project, adapt a project-specific grep for this project's own POV character names and this language's perception verbs — there is no shipped equivalent for other languages yet.
+
+Every hit = decide: kill it, or justify it (sometimes "felt" is the right word and the density check cannot tell). Zero unjustified hits before delivery.
 
 ### Step 3 — Compare word count delta against your mode budget
 

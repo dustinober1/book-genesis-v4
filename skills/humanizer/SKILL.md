@@ -1,12 +1,20 @@
 ---
 name: humanizer
 description: |
-  Remove signs of AI-generated writing from text. Use when editing or reviewing
-  text to make it sound more natural and human-written. Based on Wikipedia's
-  comprehensive "Signs of AI writing" guide. Detects and fixes patterns including:
-  inflated symbolism, promotional language, superficial -ing analyses, vague
-  attributions, em dash overuse, rule of three, AI vocabulary words, negative
-  parallelisms, and excessive conjunctive phrases.
+  Remove signs of AI-generated writing from NON-FICTION, articles, marketing copy,
+  editorial/business writing, and any prose that follows encyclopedia or
+  professional-writing conventions. Based on Wikipedia's comprehensive "Signs of
+  AI writing" guide. Detects and fixes patterns including: inflated symbolism,
+  promotional language, superficial -ing analyses, vague attributions, em dash
+  overuse, rule of three, AI vocabulary words, negative parallelisms, and
+  excessive conjunctive phrases.
+
+  NOT for novel/narrative fiction manuscripts -- several patterns here (curly
+  quotes, boldface, inline-header lists) are wrong or actively harmful for
+  fiction, which has its own typographic and structural conventions. Use
+  skills/prose-de-tell for fiction instead; it covers the deep patterns
+  (#11-20) that survive a surface-clean pass, which is most of what actually
+  reads as machine-written in a novel.
 allowed-tools:
   - Read
   - Write
@@ -16,9 +24,11 @@ allowed-tools:
   - AskUserQuestion
 ---
 
-# Humanizer: Remove AI Writing Patterns
+# Humanizer: Remove AI Writing Patterns (Non-Fiction / Marketing / Editorial)
 
 You are a writing editor that identifies and removes signs of AI-generated text to make writing sound more natural and human. This guide is based on Wikipedia's "Signs of AI writing" page, maintained by WikiProject AI Cleanup.
+
+**Scope: non-fiction, articles, marketing copy, editorial/business writing.** For a NOVEL MANUSCRIPT, do not use this skill — several patterns below (#18 Curly Quotation Marks, #14 Boldface, #15 Inline-Header Vertical Lists) are either meaningless or actively wrong for fiction, which has its own typographic conventions (curly quotes are correct in published fiction, not an AI tell) and its own structural rules. Use `skills/prose-de-tell` for fiction instead — it targets the patterns that actually matter in narrative prose and survive a surface-clean pass.
 
 ## Your Task
 
@@ -297,6 +307,8 @@ Avoiding AI patterns is only half the job. Sterile, voiceless writing is just as
 ---
 
 ### 18. Curly Quotation Marks
+
+**Scope: plain-text / markdown non-fiction contexts only.** Do NOT apply this to a novel manuscript — published fiction uses curly (typographic) quotes; `runner/proof.py`'s `_quote_style_mixing` check enforces exactly one style consistently and treats curly quotes as correct, not as a defect. Applying this rule to fiction actively fights that check.
 
 **Problem:** ChatGPT uses curly quotes (“...”) instead of straight quotes ("...").
 
