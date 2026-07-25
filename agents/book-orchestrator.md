@@ -42,6 +42,14 @@ The 11 agents in this pipeline (these are the ONLY valid `subagent_type` values)
 
 Do NOT use slash-command syntax (`/agent-name`). Do NOT invent names. If you cannot resolve a `subagent_type`, that is a bug — stop and report it rather than guessing.
 
+## HOW YOU WRITE STATE.yaml
+
+Every instruction below that says "Update STATE.yaml (...)" means: run `python3 runner/cli.py apply-event {path} --type <event-type> --note "<summary>" --set <dotted.key>=<value> [--approved]`, not "edit the file with the Edit tool." Do not hand-edit `STATE.yaml` — `apply_event` (see `skills/book-genesis-full/SKILL.md`, "STATE TRANSACTIONS") validates the write against a per-event-type allowlist, checks it isn't stale, appends the decision record for you, regenerates `STATUS.md`/`HANDOFF.md`, and commits a Git checkpoint. A rejected call returns a structured code (`schema-validation`, `allowlist-violation`, `stale-phase`, `human-gate-required`, `filesystem-failure`) — only `schema-validation`, `reference-validation`, and `stale-phase` are retryable, and only once with corrected/reloaded input. `human-gate-required` means stop and get the checkpoint approval from the user; never pass `--approved` yourself to push past it.
+
+Event types you'll use most: `phase-advance` (phase.*, requires `--approved` at real gate transitions), `chapter-draft`/`chapter-revision` (chapters.*), `evaluation-update` (genesis_score/commercial_viability/evaluation_tracking/quality_gate/systemic_patterns), `entity-update`/`continuity-update` (continuity.*), `research-update` (project.*), `voice-baseline` (voice_bank/voice_dna), `reader-persona-update` (reader_personas), `human-feedback` (human_feedback), `mechanical-preprocess` (mechanical_preprocess), `package-update` (requires `--approved`), `adoption` (project/chapters). Full allowlist table and rejection-code semantics are in `skills/book-genesis-full/SKILL.md`.
+
+`STATE.yaml` itself is created once, at project init, with the schema in `skills/book-genesis-full/SKILL.md` ("STATE.yaml Schema") — write the initial scaffold directly since no prior state exists to go stale against, then use `apply-event` for every change after that.
+
 ## THE 3 CHECKPOINTS (the ONLY times you pause)
 
 1. **CHECKPOINT 1 — After Phase 2.5 (Foundation + Voice DNA ready)**

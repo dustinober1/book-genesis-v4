@@ -26,6 +26,9 @@ from runner.lint import lint_manuscript, render_report  # noqa: E402
 from runner.timeline import check_timeline_file, find_timeline, render_issues  # noqa: E402
 from runner.discover import load_chapters, render_structure_report  # noqa: E402
 from runner.proof import proof_manuscript, render_proof_report  # noqa: E402
+from runner.state_event import apply_event  # noqa: E402
+from runner.reader_evidence import import_reader_evidence, render_evidence_report  # noqa: E402
+from runner.adopt import adopt_manuscript, render_adoption_report  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -103,6 +106,33 @@ def build_parser() -> argparse.ArgumentParser:
     gate_parser.add_argument("--phase", default="", help="Phase label to evaluate (default: current phase)")
     gate_parser.add_argument("--out", default="", help="Write the report to this path (default: work/gate-report.md)")
     gate_parser.add_argument("--json", action="store_true", help="Print a JSON verdict instead of Markdown")
+
+    event_parser = subparsers.add_parser(
+        "apply-event", help="Guarded, validated write to STATE.yaml (book-genesis-full schema)")
+    event_parser.add_argument("path")
+    event_parser.add_argument("--type", dest="event_type", required=True, help="Event type (see EVENT_ALLOWLIST)")
+    event_parser.add_argument("--note", required=True, help="One-line summary; becomes the commit message and a decisions[] entry")
+    event_parser.add_argument("--phase", dest="expected_phase", default="", help="Expected phase.current; rejects as stale-phase on mismatch")
+    event_parser.add_argument("--set", dest="sets", action="append", default=[], metavar="dotted.key=value",
+                               help="Scalar overwrite, repeatable")
+    event_parser.add_argument("--append", dest="appends", action="append", default=[], metavar="dotted.key={flow: mapping}",
+                               help="Append a YAML flow-mapping list item, repeatable")
+    event_parser.add_argument("--approved", action="store_true", help="Confirms human approval for gated event types")
+    event_parser.add_argument("--no-git", action="store_true", help="Skip the Git commit checkpoint")
+    event_parser.add_argument("--json", action="store_true", help="Print a JSON result instead of text")
+
+    evidence_parser = subparsers.add_parser(
+        "import-reader-evidence", help="Import real (human) beta-reader responses from CSV, distinct from simulated evaluation")
+    evidence_parser.add_argument("path", help="Project root")
+    evidence_parser.add_argument("csv", help="CSV file: reader_id,chapter,rating,comment,delayed")
+    evidence_parser.add_argument("--experiment", default="RE-001", help="Reader-evidence experiment ID")
+    evidence_parser.add_argument("--out", default="", help="Write the report to this path")
+
+    adopt_parser = subparsers.add_parser(
+        "adopt", help="Safely import an existing manuscript's chapters into a project")
+    adopt_parser.add_argument("source", help="Directory of existing chapter files (.md/.txt)")
+    adopt_parser.add_argument("path", help="Project root")
+    adopt_parser.add_argument("--out", default="", help="Write the adoption report to this path")
 
     return parser
 
@@ -273,6 +303,54 @@ def main(argv: list[str] | None = None) -> int:
             print(render_gate_report(verdict))
             print(f"\nReport written to {report_path}")
         return 0 if verdict.ok else 1
+
+    if args.command == "apply-event":
+        def _split_kv(items: list[str]) -> list[tuple[str, str]]:
+            pairs = []
+            for item in items:
+                if "=" not in item:
+                    print(f"malformed --set/--append (expected key=value): {item}")
+                    raise SystemExit(2)
+                key, _, value = item.partition("=")
+                pairs.append((key, value))
+            return pairs
+
+        result = apply_event(
+            target,
+            event_type=args.event_type,
+            note=args.note,
+            expected_phase=args.expected_phase,
+            sets=_split_kv(args.sets),
+            appends=_split_kv(args.appends),
+            approved=args.approved,
+            use_git=not args.no_git,
+        )
+        if args.json:
+            import json as _json
+            print(_json.dumps(result.as_dict(), indent=2))
+        else:
+            print(f"{'OK' if result.ok else 'REJECTED'}: {result.code} — {result.message}")
+            if result.commit:
+                print(f"commit: {result.commit}")
+        return 0 if result.ok else 1
+
+    if args.command == "import-reader-evidence":
+        report = import_reader_evidence(target, Path(args.csv), experiment_id=args.experiment)
+        text = render_evidence_report(report)
+        out_path = Path(args.out) if args.out else target / "feedback" / "beta-readers" / f"{args.experiment}-report.md"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(text, encoding="utf-8")
+        print(text)
+        print(f"\nWrote reader-evidence report to {out_path}")
+        return 1 if report.rejected_rows else 0
+
+    if args.command == "adopt":
+        report = adopt_manuscript(Path(args.source), target)
+        text = render_adoption_report(report)
+        if args.out:
+            Path(args.out).write_text(text, encoding="utf-8")
+        print(text)
+        return 1 if report.rejected else 0
 
     parser.error("Unknown command")
     return 2

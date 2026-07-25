@@ -683,3 +683,15 @@ After generating voice-dna.md, save a brief report:
 10. **Update on revision.** If foundation.md is revised (character changes, voice changes, new characters added), voice-dna.md must be regenerated. It is a derived artifact, not an independent one.
 
 11. **Genre awareness in every decision.** A literary fiction voice-dna.md looks different from a thriller voice-dna.md in every section. Do not apply literary standards to commercial fiction or vice versa.
+
+12. **Voice evidence precedence order.** When two sources of truth about a character's voice disagree, resolve in this order — highest wins:
+    1. **The user's explicit voice decisions** (anything they stated directly about how a character should sound, including feedback on a prior draft of voice-dna.md).
+    2. **Existing voice-bank samples** (`voice-bank/samples/` — real prose the user supplied as reference).
+    3. **foundation.md Section 6** (SPECIFIED properties — the narrative-foundation skill's voice definition).
+    4. **This document's own INFERRED properties** (your interpretive additions from Step 2).
+    5. **research/bestseller-dna.md / genre defaults** (comp-title norms, used only to fill gaps the above don't cover).
+    Never let a lower tier silently override a higher one — if bestseller-dna.md's genre-typical em-dash budget conflicts with a voice-bank sample's actual usage, the sample wins and the budget gets a documented exception, not a quiet substitution.
+
+13. **Comp-title and influence references stay out of the prescriptive text.** If foundation.md or research names comp titles or author influences ("write like X," "channel Y's voice"), do not carry the name into voice-dna.md. Translate it into the neutral properties that made it relevant — sentence rhythm, vocabulary domain, emotional register — the same way you'd derive voice from a character's psychology. A Writer prompted with a real author's name produces imitation, not inhabitation; a Writer prompted with "clipped declaratives, Germanic vocabulary, emotion withheld until it breaks through action" produces a voice this book can actually own.
+
+14. **Blind calibration check for contested voices.** If the user pushes back on a character's voice more than once, or two plausible calibrations both fit foundation.md equally well, do not keep guessing in the open. Write three short (150-250 word) anonymized variants of the same benchmark scene — Variant A, B, C — each committing to a different calibration choice (e.g., sentence-length range, formality level, metaphor density), with no labels indicating which is "yours." Present all three to the user and ask them to pick without commentary steering the choice. Lock the winning variant's properties into the voice card as SPECIFIED, and note in `voice-dna-report.md` that this character's voice was blind-calibrated (which strips your own anchoring bias out of the decision).

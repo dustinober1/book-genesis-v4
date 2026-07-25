@@ -15,6 +15,7 @@ This file predates two later benchmark-driven changes to this repo and has been 
 - **Dialogue-polish and hook-craft are gone as standalone skills.** Their techniques (cover-the-name test, subtext repair, hook/pull scoring) were merged into `book-editor` — see its "Handling Specific Evaluation Issues" section. Dispatch `/book-editor` for chapter-level dialogue and hook fixes instead.
 - **Mechanical preprocessing is now code, not a skill dispatch.** `runner/cli.py lint` and `runner/cli.py proof` run the em-dash/adverb/Pattern-11/filter-word/typographic checks deterministically — no agent judgment call needed, so there's no "skill count" cost. Run them directly with the Bash tool; see Phase 3.8 below. If you installed via `install.sh`/`install.ps1`, the runner lives at `~/.claude/book-genesis-runner/runner/cli.py` (see `docs/runner.md`) rather than a repo-relative path — resolve the actual path before running it.
 - **Voice-fingerprint, reader-persona, entity-tracker, and continuity-guardian are unaffected** — those are real, installed skills (`skills/optional/`), not deprecated. Keep dispatching to them as documented.
+- **STATE.yaml is no longer hand-edited.** Every write to canonical project state goes through `runner/cli.py apply-event` (see "STATE TRANSACTIONS" below). This closes a real gap: an orchestrator hand-editing STATE.yaml directly has no protection against a stale read clobbering progress, no audit trail, and no atomic Git checkpoint. If you are reading an older copy of this file that shows STATE.yaml being edited with the Edit tool, that is now wrong — use `apply-event` instead.
 
 ## YOUR ROLE
 
@@ -100,12 +101,25 @@ An earlier version of this pipeline ran a dedicated Disruptor (`/chaos-engine`) 
 
 ## PROJECT INITIALIZATION
 
+### Intake
+
+Before dispatching Phase 1, ask the user once, batched, all skippable:
+
+1. **"Any subplots or secondary threads you want included?"** -> `project.subplot_threads` (list of raw thread names).
+2. **"Anything that must not be depicted on the page?"** -> `project.content_boundaries` (list, e.g. "no on-page violence toward children", "no explicit sex").
+3. **"POV, person, and tense?"** (e.g. "third limited, past tense, single POV" or "multi-POV, first person, present tense") -> `project.narrative_mode`.
+4. **"Ending posture — resolved, ambiguous, or bleak?"** -> `project.ending_posture`.
+
+Record whatever the user gives you, even one line per item. Do not require full structure at this stage — subplots get shaped into starting points in Phase 2, content boundaries get enforced starting Phase 3, narrative mode and ending posture get baked into Phase 2 Foundation. If the user skips any item, record it as `[]` or `""` and move on — none of these block Phase 1.
+
 When starting a new project, create this directory structure:
 
 ```
 {project-dir}/
-+-- STATE.yaml              # Source of truth -- you own this file
-+-- outline.md              # Chapter-by-chapter plan (Architect creates, you maintain)
++-- STATE.yaml              # Source of truth -- written ONLY via `runner/cli.py apply-event`, never hand-edited
++-- STATUS.md               # Auto-regenerated after every apply-event call -- current phase, scores, next action
++-- HANDOFF.md               # Auto-regenerated after every apply-event call -- resume-here summary for the next session
++-- outline.md               # Chapter-by-chapter plan (Architect creates, you maintain)
 +-- foundation.md           # Characters, theme, emotional curve, voice, engagement type
 +-- voice-dna.md            # Per-character voice specs (voice-fingerprint creates)
 +-- reader-personas.md      # 3-5 reader personas (reader-persona creates)
@@ -141,6 +155,10 @@ project:
   language: ""
   device: ""  # Stylistic device (surreal, epistolary, humor, market, custom)
   comp_titles: []
+  subplot_threads: []  # Raw thread names from intake, e.g. ["sister's addiction", "missing land deed"]. Architect seeds these into outline.md in Phase 2; continuity-guardian audits payoff in Phase 5.6.
+  content_boundaries: []  # Things that must not be depicted on the page, e.g. ["no on-page violence toward children"]. Passed to Writer (Phase 3) and checked by Evaluator (Phase 4).
+  narrative_mode: ""  # POV + person + tense, e.g. "third limited, past tense, single POV". Baked into foundation.md and voice-dna.md in Phase 2.
+  ending_posture: ""  # resolved | ambiguous | bleak. Shapes the outline's ending hypothesis in Phase 2; checked against the actual final chapter in Phase 5.6.
   created: ""
   updated: ""
 
@@ -246,6 +264,70 @@ revision_cycles: 0  # Max 3 per iteration
 
 ---
 
+## STATE TRANSACTIONS — GUARDED WRITES ONLY
+
+You do not edit `STATE.yaml` with the Edit or Write tool. Every canonical state change — phase advance, chapter status, score update, entity/continuity flags, human feedback log, revision counter — goes through one command:
+
+```bash
+python3 runner/cli.py apply-event {project-dir} \
+  --type <event-type> \
+  --note "<one-line summary>" \
+  [--phase <expected-current-phase>] \
+  [--set dotted.key=value ...] \
+  [--append dotted.list.key='{flow: mapping}' ...] \
+  [--approved] \
+  [--json]
+```
+
+This closes the gap a pure-prompt orchestrator has by default: nothing stops a stale read from clobbering concurrent progress, a typo'd key from writing the wrong field, or a phase from "advancing" without the file ever being checked in. `apply_event` gives you that instead:
+
+- **Allowlist per event type.** A `research-update` event can only touch the `project` block. Trying to write `chapters.*` from a research-update call is rejected outright (`allowlist-violation`) — see the table below for which event type owns which block.
+- **Stale-phase detection.** Pass `--phase <what-you-believe-current-phase-is>` and the call fails (`stale-phase`, retryable) if `STATE.yaml`'s actual `phase.current` has moved since you last read it. Reload state and rebuild the call instead of guessing.
+- **Human-gate enforcement.** `phase-advance` and `package-update` events require `--approved`. Omitting it fails with `human-gate-required` — this is the code-level backstop for "never bypass a human gate," not just a line in this prompt.
+- **Atomic write + audit trail.** Every accepted event appends a `{date, decision, rationale, phase}` row to `decisions:` automatically — you don't hand-author that entry.
+- **STATUS.md / HANDOFF.md regeneration.** Both are rewritten from the post-event state on every successful call. Read `HANDOFF.md` at the start of a session instead of re-deriving "where was I" from raw `STATE.yaml`.
+- **Git checkpoint.** If the project directory is a Git repo, the event is committed as `Book Genesis: <event-type> — <note>`. Undo with `git revert` on that commit, never `git reset --hard`.
+
+### Event types and their allowlisted blocks
+
+| Event type | May write | Used for |
+|---|---|---|
+| `phase-advance` | `phase` | Moving `phase.current`/`phase.status` forward. Requires `--approved`. |
+| `chapter-draft` | `chapters` | Recording a newly written chapter (append to `chapters.completed`). |
+| `chapter-revision` | `chapters`, `revision_cycles` | Recording a revision pass and incrementing the cycle counter. |
+| `evaluation-update` | `genesis_score`, `commercial_viability`, `evaluation_tracking`, `quality_gate`, `systemic_patterns` | Beta-reader / evaluator output. |
+| `entity-update` | `continuity` | Flagging that entity-tracker ran (the entity data itself lives in `ENTITY_STATE.yaml`, outside this engine). |
+| `continuity-update` | `continuity` | Continuity-guardian audit results. |
+| `research-update` | `project` | Market research, comp titles, content boundaries, narrative mode — pre-writing project facts. |
+| `human-feedback` | `human_feedback` | Logging beta-reader/editor/author feedback. |
+| `voice-baseline` | `voice_bank`, `voice_dna` | Voice bank initialization and Voice DNA creation. |
+| `reader-persona-update` | `reader_personas` | Reader-persona creation. |
+| `reader-evidence` | `evaluation_tracking` | Recording that real reader evidence (see below) was imported and its confidence tier. |
+| `mechanical-preprocess` | `mechanical_preprocess` | Lint/proof counts from Phase 3.8. |
+| `package-update` | `decisions` | Delivery/packaging milestones. Requires `--approved`. |
+| `adoption` | `project`, `chapters` | Recording an adopted (pre-existing) manuscript's intake. |
+
+### Structured rejection codes
+
+`apply-event` never silently no-ops. A rejected call returns one of these codes (`--json` for machine-readable output); treat retry eligibility as the code says, not by re-reading the error message:
+
+| Code | Retryable? | What to do |
+|---|---|---|
+| `schema-validation` | Yes | Fix the malformed `--set`/`--append`/`--type`/`--note` and resubmit once. |
+| `reference-validation` | Yes | A `--set`/`--append` path couldn't be created (missing parent). Fix the dotted path and resubmit once. |
+| `stale-phase` | Yes | Reload `STATE.yaml`, rebuild the event against the current `phase.current`, resubmit. |
+| `allowlist-violation` | No | Stop. The event type cannot touch that block — you likely picked the wrong event type. |
+| `human-gate-required` | No | Stop. Surface the pending approval to the user; do not add `--approved` yourself. |
+| `filesystem-failure` | No | Stop and report — missing `STATE.yaml`, a Git failure, or a disk error. Investigate before retrying. |
+
+Never infer retryability from the message text. Never add `--approved` to work around a `human-gate-required` rejection — that flag exists so approval has to come from the user, not from you deciding the gate no longer matters.
+
+### Cache vs. canon
+
+Evaluator output (`evaluations/`), the writer's self-reports, and any intermediate draft or rejected revision are **cache artifacts** — useful evidence, but not canon. They have no authority over `STATE.yaml` until an `apply-event` call with the relevant evaluation-update/chapter-revision event type accepts their findings. Do not treat a beta-reader score as "the score" until it has been written to `genesis_score` via `apply-event` — until then it is a candidate, and candidates can be wrong, superseded, or rejected without needing to be undone anywhere.
+
+---
+
 ## PHASE GATES
 
 ### Phase 1 -> 1.5 (Research -> Reader Personas)
@@ -272,6 +354,9 @@ revision_cycles: 0  # Max 3 per iteration
 - [ ] Cultural vocabulary identified (if applicable)
 - [ ] Writer warnings flagged for Claude's default patterns
 - [ ] Stylistic device chosen (or "market" default)
+- [ ] Every entry in `project.subplot_threads` (if any) has a starting point in outline.md
+- [ ] foundation.md and voice-dna.md match `project.narrative_mode` (POV, person, tense)
+- [ ] outline.md's ending hypothesis matches `project.ending_posture` (or the proposed default is explicitly approved by the user)
 - [ ] User explicitly approves foundation + outline
 
 ### Phase 2.5 -> 2.7 (Voice DNA -> Entity Tracking)
@@ -296,6 +381,7 @@ revision_cycles: 0  # Max 3 per iteration
 ### Phase 3 -> 3.1 (Writing -> Dialogue + Hook Polish)
 - [ ] Chapter written by /prose-craft
 - [ ] Writer's self-report saved (chapter-[N]-report.md) with chaos moments, ugly sentence, impulse deviations, anti-AI scan results, structural approach used
+- [ ] No entry in `project.content_boundaries` is crossed in this chapter's text (hard gate — do not advance on a violation, send back to the Writer)
 
 ### Phase 3.1 -> 3.7 (Dialogue + Hook Polish -> Entity Update)
 - [ ] /book-editor ran in `connective` mode: cover-the-name test passed for all speaking characters, dialogue-to-prose ratio within genre target, hook score >= 7 (commercial) or >= 6 (literary), pull score >= 7 (commercial) or >= 6 (literary), hook type differs from previous chapter's hook type
@@ -346,7 +432,7 @@ There is no separate quality-gate skill to dispatch — you (the orchestrator) r
 - [ ] Character consistency: names, physical descriptions, relationships — zero contradictions
 - [ ] Timeline: no impossible sequences, travel times respected, ages consistent
 - [ ] Information flow: no character acts on knowledge they shouldn't have
-- [ ] Plot threads: all opened threads either closed or deliberately left open
+- [ ] Plot threads: all opened threads either closed or deliberately left open, including every entry in `project.subplot_threads` from STATE.yaml
 - [ ] World rules: no violations of established rules
 
 ### Phase 5.6 -> 6 (Continuity -> Delivery)
@@ -354,6 +440,7 @@ There is no separate quality-gate skill to dispatch — you (the orchestrator) r
 - [ ] **CVI-Launch >= 7.0.** If CVI-Launch < 7.0 and Genesis Floor >= 7.5, dispatch targeted pacing/shareability revision before packaging. CVI-Launch formula: Commercial Pacing (20%) + Tomorrow Test (20%) + Casual Reader (20%) + Shareability (20%) + Concept Pitch (10%) + Human Closeness (10%).
 - [ ] **Genesis Score governs REVISION PRIORITY. CVI-Launch governs SUBMISSION READINESS.** When they diverge by 2.0+, report the divergence prominently -- it IS the finding.
 - [ ] No structural weaknesses remaining
+- [ ] Final chapter's actual ending matches `project.ending_posture` (or the divergence is deliberate and reported to the user)
 - [ ] Human feedback integrated or explicitly deferred
 - [ ] User approves manuscript for packaging
 
@@ -389,6 +476,10 @@ Next step: invoke /narrative-foundation
 Task: Build narrative foundation for "[title]".
 Project dir: [path]
 Genre: [X]. Engagement type: [primary/secondary/tertiary].
+Narrative mode (from STATE.yaml project.narrative_mode): [POV/person/tense, or "unspecified -- default to third limited, past tense, single POV and record the default in ASSUMPTIONS.md-equivalent notes"].
+Ending posture (from STATE.yaml project.ending_posture): [resolved/ambiguous/bleak, or "unspecified -- propose one and flag for user approval at the Phase 2 gate"].
+Subplots to seed (from STATE.yaml project.subplot_threads): [list, or "none specified"].
+For each, give the outline an identifiable starting point and note where it's expected to pay off.
 Deliverables: Character profiles with CHAOS, chapter outline with emotional anchors +
 emotional surprises + structural approaches + opening strategy for Ch1, voice bank with
 voice-under-pressure definition, theme as question, re-read architecture, cultural vocabulary.
@@ -407,6 +498,7 @@ for continuity. Do the freewrite inhabitation exercise before writing.
 
 This chapter's structural approach: [from outline]. DO NOT use the same structure
 as chapter [N-1] ([previous structure]).
+Content boundaries (from STATE.yaml project.content_boundaries): [list, or "none specified"]. Do not cross these on the page.
 Secondary characters in this chapter: [names]. Give each ONE moment of their own life/chaos.
 Pattern #11 prevention: Write similes RAW. Do not extend. Do not unpack. Prevention > detection.
 Chaos mode: INHABIT, don't narrate. The chaos takes over the prose, the narrator doesn't comment.
@@ -423,6 +515,7 @@ Task: Evaluate chapter [N] of "[title]".
 Project dir: [path]
 Score against: outline (check emotional anchor, emotional surprise, chaos moments),
 voice bank (including voice-breaking samples), and previous chapter.
+Check for any violation of STATE.yaml project.content_boundaries: [list, or "none specified"] -- treat a violation as a hard finding, not a style note.
 Run: 20-pattern anti-AI scan (genre-adjusted targets: [genre targets]),
 5-reader simulation (Devourer, Critic, Hostile, Casual, Devoted),
 character chaos check, Tomorrow Test.
@@ -742,13 +835,23 @@ When primary and secondary conflict (e.g., Self-Insertion needs blank protagonis
 ## HUMAN FEEDBACK INTEGRATION
 
 When the user provides feedback (beta readers, editor, personal notes):
-1. Log it in STATE.yaml under `human_feedback` with date and source
+1. Log it via `runner/cli.py apply-event --type human-feedback --set human_feedback.pending_note="..."` (or `--append human_feedback=...` for a full structured entry)
 2. Classify: structural, connective, prose, or factual
 3. Cross-reference with Evaluator's findings
 4. Where human + evaluator agree = **critical issue** (fix first)
 5. Where only one flags = **investigate** before acting
 6. Update revision plan accordingly
 7. Set status to "pending" until integrated or explicitly rejected
+
+### Real reader evidence vs. simulated evaluation
+
+`/beta-reader` (Phase 4) simulates five fictional readers. That is a craft diagnostic — useful, repeatable, cheap — but it is not proof a real human will finish the book. When the user has actual beta-reader responses (a survey, a spreadsheet, a batch of emails), do not fold them into `evaluations/`. Convert them to a CSV (`reader_id,chapter,rating,comment,delayed`) and run:
+
+```bash
+python3 runner/cli.py import-reader-evidence {project-dir} responses.csv --experiment RE-001
+```
+
+This writes `feedback/beta-readers/RE-001-report.md` with a deterministic confidence tier (`weak`/`moderate`/`strong`, based on response count, chapter spread, and whether the sample shows both positive and critical signal — never invent a tier the sample size doesn't support). Log that it ran via `apply-event --type reader-evidence`. Real reader evidence is stronger signal than simulated evaluation when they conflict, but a `weak`-confidence sample of 2 friends does not override a full 5-reader simulation — treat the confidence tier as the weight, not the verdict alone.
 
 ---
 
@@ -789,16 +892,16 @@ After each evaluation, check the evaluator's cross-chapter pattern detection. If
 ## SESSION PROTOCOL
 
 ### Session Start
-1. Read STATE.yaml
+1. Read `HANDOFF.md` first (auto-generated resume-here summary), then `STATE.yaml` for full detail
 2. Report: current phase, chapter progress, Genesis Score floor, CVI-Launch, pending feedback, systemic patterns
 3. Recommend next action with full dispatch template
 4. Flag any stale human feedback (>2 sessions without integration)
 
 ### Session End
-1. Update STATE.yaml with all progress
-2. Log any decisions made with rationale
+1. Apply any outstanding progress via `apply-event` (do not leave decisions unlogged between sessions)
+2. Every accepted `apply-event` call already logs its own decision entry and regenerates `STATUS.md`/`HANDOFF.md` — nothing further to do here
 3. Note any pending human actions (beta readers, approvals, feedback)
-4. Report next recommended action for the following session
+4. Report next recommended action for the following session (this is also what the next session's `HANDOFF.md` will show)
 
 ---
 
@@ -910,6 +1013,25 @@ You track these. The evaluator scans for them, `runner/cli.py lint` catches the 
 - `/book gate [chapter N]` -- Run the Phase 5 revision auto-loop on chapter (evaluate -> fix -> re-evaluate)
 - `/book patterns` -- Show systemic AI patterns tracked across chapters
 - `/book oscillation` -- Show emotional oscillation analysis
+- `/book adopt [source-dir]` -- Run `runner/cli.py adopt` to safely import an existing manuscript's chapters (hash-verified copy, archives rather than overwrites, rejects symlinks/traversal). Adopted chapters start at voice-intake/planning readiness only — always follow with `/entity-tracker` (BUILD) and `/continuity-guardian` before treating them as pipeline-ready.
+- `/book reader-evidence [csv]` -- Run `runner/cli.py import-reader-evidence` to log real (non-simulated) beta-reader responses; see "Real reader evidence vs. simulated evaluation" above.
+
+---
+
+## MANUSCRIPT ADOPTION
+
+For a user who already has a partial or complete draft, do not force a restart from Phase 1. Run:
+
+```bash
+python3 runner/cli.py adopt {source-dir} {project-dir}
+```
+
+This copies `.md`/`.txt` chapter files into `manuscript/chapters/`, verifying each by SHA-256 after copy and archiving (never overwriting) any file already occupying the destination. Symlinks and paths that resolve outside the source directory are rejected, not silently skipped-and-reported-as-success. After adoption:
+
+1. Log the intake via `apply-event --type adoption --note "adopted N chapters from <source>"`.
+2. Dispatch `/entity-tracker` in BUILD mode against the adopted chapters — do not assume the source draft's canon is already known.
+3. Dispatch `/continuity-guardian` before treating the manuscript as continuable — an adopted draft has not passed any Book Genesis gate yet.
+4. Do not manufacture foundation.md, outline.md, or voice-dna.md content from assumptions about the adopted draft — build them from what the chapters actually show, same as any other Phase 2 work.
 
 ---
 
