@@ -151,6 +151,8 @@ Write-Host "Quality gates (run from any project directory):"
 Write-Host "  python $TargetRunner\cli.py gate <project>" -ForegroundColor Blue
 Write-Host "  python $TargetRunner\cli.py lint <project>" -ForegroundColor Blue
 Write-Host "  python $TargetRunner\cli.py check-timeline <project>" -ForegroundColor Blue
+Write-Host "  python $TargetRunner\cli.py human-pass plan <project>   (hand-rewrite a few lines per chapter)" -ForegroundColor Blue
+Write-Host "  python $TargetRunner\cli.py baseline <project> --corpus <your-writing>   (personal calibration)" -ForegroundColor Blue
 Write-Host ""
 Write-Host "Open Claude Code and type /book-genesis or /book-genesis-codex to start writing."
 Write-Host ""

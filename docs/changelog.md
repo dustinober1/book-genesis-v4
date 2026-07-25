@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-07-25 -- Prevention, Personal Calibration, and the Human Pass
+
+### Added
+- Seven new `runner/cli.py` commands: `macro`, `ledger`, `texture`, `human-pass` (plan/apply/status), `voice-lexicon`, `baseline`, `fingerprint` (save/compare). See `docs/runner.md`.
+- `gates.ADVISORY_CHECKS` -- new checks run and report their real status on every gate without blocking `advance-phase` until their thresholds are calibrated. Currently: `macro`, `texture`, `voice_lexicon`.
+- `runner/styleprofile.py` (`style-profile.yaml`) and `runner/corpus.py` (`baseline`) -- per-project lint threshold overrides, hand-editable or derived from the author's own writing, never applied invisibly.
+- `human_pass` is a real, non-advisory gate on Phase 7: Production -- see `runner/humanpass.py` and the new CHECKPOINT 3 in `agents/book-orchestrator.md`.
+
+### Fixed
+- HTML metadata comments (the writer's `<!-- Word count: ... -->` header) were compiling into the EPUB as visible text and inflating lint's em-dash count. New `discover.strip_comments` primitive, wired into the compiler, lint, proof, and the word-count gate.
+
+### Changed
+- `manifest.yaml`'s drafting/audit phases gained `macro`, `texture`, and `voice_lexicon` checks (all advisory); Phase 7 gained `human_pass` (blocking).
+
 ## 2026-04-26 -- Agent-Agnostic Positioning
 
 ### Changed

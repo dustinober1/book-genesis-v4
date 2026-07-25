@@ -122,12 +122,14 @@ When starting a new project, create this directory structure:
 +-- outline.md               # Chapter-by-chapter plan (Architect creates, you maintain)
 +-- foundation.md           # Characters, theme, emotional curve, voice, engagement type
 +-- voice-dna.md            # Per-character voice specs (voice-fingerprint creates)
++-- voice-lexicon.yaml      # Per-character never_say list, machine-checked by `runner/cli.py voice-lexicon`
++-- style-profile.yaml      # Optional: personal lint threshold overrides (see `runner/cli.py baseline`)
 +-- reader-personas.md      # 3-5 reader personas (reader-persona creates)
 +-- voice-bank/             # 10-15 gold-standard prose excerpts
 |   +-- README.md           # Voice bank guidelines
 |   +-- samples/            # Individual voice samples
 +-- manuscript/
-|   +-- chapters/           # One .md file per chapter
+|   +-- chapters/           # One .md file per chapter, plus chapter-N-report.md self-reports
 |   +-- full-manuscript.md  # Assembled manuscript (generated)
 +-- evaluations/            # One .md per evaluation round
 +-- continuity/             # Continuity audit reports
@@ -138,6 +140,11 @@ When starting a new project, create this directory structure:
 |   +-- author-notes.md     # Author's own annotations
 +-- research/               # Market research, data, sources
 |   +-- bestseller-dna.md   # If exists, Writer reads Section 2 (Prose Rules)
+|   +-- texture-bank.md     # Optional: sourced world-texture entries (real settings only), see `runner/cli.py texture`
++-- work/                   # Runner-generated artifacts, regenerated per chapter/checkpoint
+|   +-- retired.md          # Retired-phrase ledger (`runner/cli.py ledger`) -- read by the next chapter's writer dispatch
+|   +-- human-pass.md       # Human-pass worksheet (`runner/cli.py human-pass plan`), CHECKPOINT 3
+|   +-- baseline-report.md  # Personal baseline comparison (`runner/cli.py baseline`)
 +-- delivery/               # Final package (editorial, formatted files)
     +-- editorial/
     +-- formatted/
@@ -306,6 +313,8 @@ This closes the gap a pure-prompt orchestrator has by default: nothing stops a s
 | `mechanical-preprocess` | `mechanical_preprocess` | Lint/proof counts from Phase 3.8. |
 | `package-update` | `decisions` | Delivery/packaging milestones. Requires `--approved`. |
 | `adoption` | `project`, `chapters` | Recording an adopted (pre-existing) manuscript's intake. |
+| `human-pass` | `human_pass` | CHECKPOINT 3 outcome (worksheet generated, chapters updated, or explicitly skipped). Requires `--approved` — it IS the human gate. |
+| `config-update` | `runtime` | Operator-level overrides, e.g. `runtime.disruptor_model` for the MODEL DIVERSITY A/B PROTOCOL. |
 
 ### Structured rejection codes
 
@@ -634,10 +643,22 @@ Run directly with the Bash tool — no agent involved, these are deterministic c
 python3 runner/cli.py lint  [project]/manuscript/chapters --profile [genre]
 python3 runner/cli.py proof [project]/manuscript/chapters
 
-Read the reports. If either flags a failure (em-dash density, Pattern #11, adverb density,
-sentence-start repetition, filter words, or a typographic defect), fix it directly — these
-are mechanical edits, not judgment calls, so you (the orchestrator) apply them yourself
-rather than dispatching an agent. Re-run to confirm clean before advancing to Phase 4.
+Read the reports. If either flags a failure (em-dash density, adverb density, sentence-start
+repetition, close-proximity word echo, voice drift between the first and last third, filter
+words, or a typographic defect), fix it directly — these are mechanical edits, not judgment
+calls, so you (the orchestrator) apply them yourself rather than dispatching an agent. Pattern
+#11 (explanatory simile extension) is not yet a `lint` check — still spot-check with
+`grep -n 'not because\|not .*, but\|the kind of .* that' [chapter]`. Re-run to confirm clean
+before advancing to Phase 4.
+
+Once a chapter is finalized (past its quality gate), regenerate the retired-phrase ledger so
+the NEXT chapter's writer dispatch can read it as a banned list:
+
+python3 runner/cli.py ledger [project]
+
+At six or more finalized chapters, also worth a periodic check (advisory, never blocking):
+
+python3 runner/cli.py macro [project]/manuscript/chapters
 ```
 
 **Phase 5 -- Revision auto-loop (you run this directly; there is no /quality-gate skill):**

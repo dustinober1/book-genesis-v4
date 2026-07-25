@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -22,7 +23,8 @@ from runner.filesystem import (  # type: ignore  # noqa: E402
     state_set,
     validate_project,
 )
-from runner.gates import evaluate_gate  # type: ignore  # noqa: E402
+from runner import gates as _gates  # type: ignore  # noqa: E402
+from runner.gates import CheckResult, evaluate_gate, render_gate_report  # type: ignore  # noqa: E402
 
 
 class RunnerTests(unittest.TestCase):
@@ -149,12 +151,39 @@ class RunnerTests(unittest.TestCase):
         # The demo must genuinely pass the deterministic gates (lint,
         # chronology, chapter order), not merely produce non-empty files --
         # that is the whole point of code-enforced gates existing.
+        #
+        # This asserts on the verdict line specifically, not on the whole
+        # report text: a check's own `detail` can legitimately contain the
+        # word "FAIL" (e.g. an advisory check's own render_report embeds a
+        # "**Verdict: FAIL**" line from a check-local report), which a bare
+        # `assertNotIn("FAIL", text)` would misread as the *gate* failing.
         create_demo(self.tempdir, adapter="codex", model_name="gpt-5.5")
         gate_report = self.tempdir / "work" / "gate-report.md"
         self.assertTrue(gate_report.exists())
         text = gate_report.read_text(encoding="utf-8")
-        self.assertIn("PASS", text)
-        self.assertNotIn("FAIL", text)
+        verdict_line = next(
+            line for line in text.splitlines() if line.startswith("**Verdict:")
+        )
+        self.assertEqual("**Verdict: PASS**", verdict_line)
+
+    def test_demo_failure_message_reports_failed_checks(self) -> None:
+        # advance_phase returns pending=[] with the reason in failed_checks
+        # when a *check* fails (as opposed to an output being missing, which
+        # populates pending instead). create_demo used to report only
+        # `pending`, so any check failure surfaced as the undebuggable
+        # "Demo could not advance: []". Force one failing advance and confirm
+        # the raised message actually names the failed check.
+        with patch(
+            "runner.filesystem.advance_phase",
+            return_value={
+                "ok": False, "pending": [], "next_phase": "Phase 3: Drafting",
+                "failed_checks": ["lint: em_dash_density over threshold"],
+                "report": "",
+            },
+        ):
+            with self.assertRaises(RuntimeError) as ctx:
+                create_demo(self.tempdir, adapter="codex", model_name="gpt-5.5")
+        self.assertIn("em_dash_density over threshold", str(ctx.exception))
 
     def test_advance_blocked_by_broken_chronology(self) -> None:
         # Drafting is the first phase with a "timeline" check. Fill its
@@ -214,6 +243,88 @@ class RunnerTests(unittest.TestCase):
         verdict = evaluate_gate(self.tempdir, broken_phase)
         self.assertFalse(verdict.ok)
         self.assertEqual(["error"], [r.status for r in verdict.results])
+
+    def test_advisory_check_failure_does_not_block_gate(self) -> None:
+        # A new, uncalibrated check must be visible (real status reported)
+        # but non-blocking (excluded from GateVerdict.ok) until it is
+        # promoted by removing its name from ADVISORY_CHECKS.
+        scaffold_project(self.tempdir, idea="", adapter="codex", model_name="gpt-5.5")
+        phase = load_manifest()[0]
+        fake_phase = type(phase)(
+            key=phase.key, label=phase.label, prompt=phase.prompt, gate=phase.gate,
+            outputs=[], next=phase.next, checks=["fake_advisory"],
+        )
+
+        def _always_fails(target, args):
+            return CheckResult("fake_advisory", "fail", "not calibrated yet")
+
+        with patch.dict(
+            _gates.CHECK_REGISTRY, {"fake_advisory": _always_fails}
+        ), patch.object(
+            _gates, "ADVISORY_CHECKS", {"fake_advisory"}
+        ):
+            verdict = evaluate_gate(self.tempdir, fake_phase)
+            report = render_gate_report(verdict)
+
+        # The gate itself is not blocked...
+        self.assertTrue(verdict.ok)
+        self.assertEqual([], verdict.blocking)
+        # ...but the check's real status is still visible, not silently
+        # rewritten to "pass" -- that would hide the finding instead of
+        # flagging it.
+        self.assertEqual("fail", verdict.results[0].status)
+        self.assertTrue(verdict.results[0].advisory)
+        self.assertEqual(1, len(verdict.advisory_flagged))
+        self.assertIn("FAIL (advisory)", report)
+        self.assertIn("fake_advisory (fail)", report)
+
+    def test_advisory_check_error_does_not_block_gate(self) -> None:
+        # run_check converts any raised exception to status="error"; an
+        # advisory check that crashes on real prose must not hard-block the
+        # pipeline either.
+        scaffold_project(self.tempdir, idea="", adapter="codex", model_name="gpt-5.5")
+        phase = load_manifest()[0]
+        fake_phase = type(phase)(
+            key=phase.key, label=phase.label, prompt=phase.prompt, gate=phase.gate,
+            outputs=[], next=phase.next, checks=["fake_advisory_crash"],
+        )
+
+        def _always_raises(target, args):
+            raise ValueError("not ready for real prose yet")
+
+        with patch.dict(
+            _gates.CHECK_REGISTRY, {"fake_advisory_crash": _always_raises}
+        ), patch.object(
+            _gates, "ADVISORY_CHECKS", {"fake_advisory_crash"}
+        ):
+            verdict = evaluate_gate(self.tempdir, fake_phase)
+
+        self.assertTrue(verdict.ok)
+        self.assertEqual("error", verdict.results[0].status)
+        self.assertTrue(verdict.results[0].advisory)
+
+    def test_promoting_advisory_check_makes_it_blocking(self) -> None:
+        # Promotion is deleting the name from ADVISORY_CHECKS -- nothing
+        # else should need to change for a check to start blocking.
+        scaffold_project(self.tempdir, idea="", adapter="codex", model_name="gpt-5.5")
+        phase = load_manifest()[0]
+        fake_phase = type(phase)(
+            key=phase.key, label=phase.label, prompt=phase.prompt, gate=phase.gate,
+            outputs=[], next=phase.next, checks=["fake_promoted"],
+        )
+
+        def _always_fails(target, args):
+            return CheckResult("fake_promoted", "fail", "now calibrated")
+
+        with patch.dict(
+            _gates.CHECK_REGISTRY, {"fake_promoted": _always_fails}
+        ):
+            # Not in ADVISORY_CHECKS (the real, module-level set) -> blocking.
+            verdict = evaluate_gate(self.tempdir, fake_phase)
+
+        self.assertFalse(verdict.ok)
+        self.assertEqual(1, len(verdict.blocking))
+        self.assertFalse(verdict.results[0].advisory)
 
     def test_cli_init_runs_by_path(self) -> None:
         project = self.tempdir / "cli-project"

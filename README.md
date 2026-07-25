@@ -22,7 +22,7 @@ Type it in. That's it. The system takes over.
 
 8 AI agents run in sequence — researching your genre, forging a premise with a structural irony engine, writing every chapter, scoring each one independently, revising anything below the quality gate, and packaging the result for publication.
 
-You approve 3 times. Everything else is automatic.
+You approve 4 times. Everything else is automatic.
 
 **No writing experience required. No prompt engineering. No creative blocks.**
 
@@ -135,6 +135,22 @@ Here's the exact sequence:
                        │
                        ▼
 ┌─────────────────────────────────────────────────────┐
+│  PHASE 5.7 — Human-Pass Worksheet                    │
+│  • A handful of lines per chapter, mechanically      │
+│    selected — opening, closing, a simile, dialogue   │
+│  • You hand-rewrite whichever ones you want          │
+│  • Applied rewrites are protected from every later   │
+│    automated pass (nothing overwrites your words)    │
+└──────────────────────┬──────────────────────────────┘
+                       │
+             ╔═════════╧══════════╗
+             ║   CHECKPOINT 3     ║  ← YOU APPROVE
+             ║  "edit these lines ║
+             ║   or skip"         ║
+             ╚═════════╤══════════╝
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────┐
 │  PHASE 6 — Delivery Package                         │
 │  • Logline & back-cover blurb                       │
 │  • Query letter (ready to send to agents)           │
@@ -142,7 +158,7 @@ Here's the exact sequence:
 └──────────────────────┬──────────────────────────────┘
                        │
              ╔═════════╧══════════╗
-             ║   CHECKPOINT 3     ║  ← YOU APPROVE
+             ║   CHECKPOINT 4     ║  ← YOU APPROVE
              ║   your book        ║
              ╚════════════════════╝
 ```

@@ -29,6 +29,7 @@ from xml.sax.saxutils import escape as _xml_escape
 import zipfile
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from runner.discover import strip_comments
 from runner.filesystem import _load_simple_yaml_map  # reuse the one YAML-ish parser in this repo
 
 EPOCH = (1980, 1, 1, 0, 0, 0)
@@ -270,6 +271,12 @@ def _inline(text: str) -> str:
 
 
 def md_to_xhtml_body(md: str, *, source: str = "<chapter>") -> str:
+    # Editorial comments are metadata, not prose. `_FORBIDDEN` below only
+    # rejects `^\s*<[a-zA-Z]`, so `<!--` used to fall through to the paragraph
+    # branch and get XML-escaped -- every chapter of every EPUB opened with a
+    # visible `<!-- Word count: ... -->` line, since agents/book-writer.md
+    # mandates that header. Drop comments before anything else looks at them.
+    md = strip_comments(md)
     lines = md.splitlines()
     out: List[str] = []
     para: List[str] = []

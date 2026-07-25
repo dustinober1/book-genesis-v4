@@ -1,5 +1,53 @@
 # Changelog
 
+## V4.3 — 2026-07-25
+
+The existing quality gates catch a manuscript-shaped problem after it's already in the manuscript. This release adds prevention alongside detection, anchors the prose to a specific human's writing instead of a stranger's editorial report, and closes three live bugs the earlier work would otherwise have inherited.
+
+### Fixed: HTML comments leaking into the compiled EPUB and corrupting lint counts
+
+Every chapter carries a `<!-- Word count: ... -->` metadata header (`agents/book-writer.md`). `md_to_xhtml_body` had no comment handling, so that header compiled straight into the reader-facing EPUB as visible garbage text. Separately, `<!--`/`-->` each contain `--`, which `lint.py`'s em-dash counter read as two prose em dashes per comment — a single header alone was +2 phantom em dashes against a 4.0/1k FAIL threshold. Fixed with one new primitive, `discover.strip_comments`, wired into the compiler, lint, proof, and the word-count gate. The demo fixture now includes a comment-bearing chapter so this class of bug can't hide again.
+
+### Added: advisory gate checks
+
+New deterministic checks can now run on every gate and report their real status — visible in the report and `--json` — without blocking `advance-phase` while their thresholds are still uncalibrated. `gates.ADVISORY_CHECKS` names them; promotion to a real, blocking gate is deleting one name from that set. `macro`, `texture`, and `voice_lexicon` (below) all ship this way.
+
+### Added: word echo, sentence-opener repeats, and voice drift (`lint`)
+
+Three new manuscript-lint findings, all warn-severity pending real-world calibration: **word echo** catches a distinctive word repeating within a close window even when manuscript-wide repetition looks clean; **sentence-opener repeats** catches a paragraph where several consecutive sentences share an opening word (narrower than the existing paragraph-level opener check); **voice drift** catches speaker pairs that were distinguishable early in the manuscript and have statistically converged by the end — the failure mode neither a single-chapter check nor a whole-book average can see.
+
+### Added: book-level template detection (`macro`, advisory)
+
+Chapter opening/closing mode share (dialogue / question / image-action / fragment / maxim), scene-break count uniformity, and chapter-title parallelism, at manuscript scale rather than chapter scale. Needs six or more chapters to say anything — below that it reports `skip`, not a false "no template detected."
+
+### Added: the retired-phrase ledger (`ledger`)
+
+Turns the pipeline's repetition checks from post-mortem into prevention. After each finalized chapter, `runner/cli.py ledger` scans every chapter and writes `work/retired.md`: phrases, simile vehicles, chapter-opening words, and dialogue tags already used, plus (from a new `meta` record in the writer's self-report) the most recently used structural approach and hook type. The next chapter's writer dispatch reads this as a banned list instead of finding out from the evaluator two chapters later.
+
+### Added: sourced world-texture research (`texture`, advisory)
+
+For books with a specific real-world or historical setting: `research/texture-bank.md` holds sourced, verified sensory detail (place/object/jargon/price/weather), and `runner/cli.py texture` reports which entries made it into the manuscript, which are unused, and — the important one — which have no source, since that is exactly where a hallucinated "researched" fact would hide. `book-researcher` gained a WORLD-TEXTURE RESEARCH PROTOCOL and a conditional Phase 2.6 dispatch.
+
+### Added: the human pass (`human-pass`) — new CHECKPOINT 3
+
+The one lever nothing else in this system can substitute for: a small, mechanically-selected set of lines per chapter (opening, closing, a simile, a line of dialogue) for a person to hand-rewrite. `human-pass plan` builds the worksheet; `human-pass apply` splices accepted rewrites back in, wrapped in `<!-- hp:start -->...<!-- hp:end -->` markers that no later automated pass (editor, disruptor, writer) may touch. This is a real, non-advisory gate on Phase 7: Production — set `project.skip_human_pass=true` to opt out explicitly. The pipeline now has **4 checkpoints**, not 3; delivery moved from Checkpoint 3 to Checkpoint 4.
+
+### Added: personal baseline calibration (`baseline`)
+
+Compares a manuscript against a directory of the author's own writing and writes `work/baseline-report.md` — a metric-by-metric comparison, not a gate. Derived lint-threshold overrides are written to `style-profile.suggested.yaml`, never to the active `style-profile.yaml`, and never looser than the genre default unless `--allow-loosen` is passed explicitly. `style-profile.yaml` (new: `runner/styleprofile.py`) lets any project override `lint.Thresholds` fields directly, reviewed and hand-edited.
+
+### Added: voice lexicon checks (`voice-lexicon`, advisory)
+
+`voice-lexicon.yaml` (new `book-architect` output, alongside `voice-dna.md`) gives each character's "never says" list a machine-checkable form — `runner/cli.py voice-lexicon` flags attributed dialogue that violates it.
+
+### Added: stylometric fingerprinting (`fingerprint`)
+
+Burrows' Delta comparison against a small library of prior manuscripts, meant to answer one question: does a new book measure closer to the author's own writing than to a previous book this pipeline wrote? Deliberately the least trusting module in the runner — a null simulation showed the ranking is a coin flip below 6 reference profiles, so no winner is ever named below that floor, and every report carries an explicit confound warning (Delta is dominated by genre/tense/POV/dialogue ratio at least as much as by authorial voice).
+
+### Changed: Step E (mechanical preprocess) now uses the runner, not raw grep/sed
+
+The orchestrator's per-chapter mechanical pass previously re-implemented em-dash counting, adverb counting, and opener-repetition checking as raw bash — duplicate, less accurate versions of what `lint.py` already did properly, and out of sync with `skills/book-genesis-full/SKILL.md`'s Phase 3.8, which already routed through `lint`/`proof`. Step E now calls `runner/cli.py lint` and `runner/cli.py proof` directly; only the Pattern #11 grep and the per-chapter word-count check (which have no runner equivalent yet) remain as direct bash.
+
 ## V4.2 — 2026-06-10
 
 ### Added: Premise Forge (Phase 1.5)

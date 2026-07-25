@@ -98,6 +98,145 @@ LINE_DEFECTS: Tuple[Tuple[str, str], ...] = (
 
 VOWEL_GROUP = re.compile(r"[aeiouy]+")
 
+# Editorial metadata carried inside the chapter file itself.
+HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+
+
+def strip_comments(
+    text: str, *, preserve_layout: bool = False, fill: str = " ",
+) -> str:
+    """Remove HTML comments so they are never measured or published as prose.
+
+    Chapter files carry editorial metadata in comments: the writer's header
+    (``<!-- Word count: 3200 | Target: 3000 | Anchor: ... -->``, mandated by
+    agents/book-writer.md) and human-pass span markers. Both are invisible to
+    a reader and must be invisible to the analysers too, for two reasons that
+    are easy to miss:
+
+    - ``<!--`` and ``-->`` each contain ``--``, which lint.analyze_chapter
+      counts as an em dash. One comment is +2 phantom em dashes against a
+      threshold of 4.0 per 1000 words.
+    - The words inside a comment inflate every per-1000-words denominator and
+      the wordcount gate.
+
+    ``preserve_layout`` blanks each comment in place instead of deleting it,
+    keeping byte offsets and line numbers identical. proof.py reports line
+    numbers (see ``_line_of``), so it needs that form; lint, which reports
+    chapters and excerpts, does not.
+
+    ``fill`` is the character the blanked comment is made of. It matters more
+    than it looks: a run of spaces trips proof's doubled-space check, and a
+    run of ``#`` or ``-`` would register as a scene break on its own line. Any
+    caller using ``preserve_layout`` against proof-style detectors should pass
+    an inert letter.
+    """
+    if preserve_layout:
+        return HTML_COMMENT.sub(
+            lambda m: re.sub(r"[^\n]", fill, m.group(0)), text)
+    return HTML_COMMENT.sub("", text)
+
+
+# Human-pass markers (runner/humanpass.py). A pair brackets a span of text a
+# human hand-rewrote; downstream agents (editor, disruptor) must not modify
+# anything inside one. These are still ordinary HTML comments as far as
+# strip_comments above is concerned -- they disappear from compiled output
+# and never register as prose em dashes -- this is a second, narrower view
+# of the same markup, for callers that need to know WHERE the protected text
+# is rather than just that it should be invisible.
+_HP_START = "<!-- hp:start -->"
+_HP_END = "<!-- hp:end -->"
+_HP_SPAN = re.compile(re.escape(_HP_START) + r"(.*?)" + re.escape(_HP_END), re.DOTALL)
+
+
+def protected_spans(text: str) -> List[Tuple[int, int]]:
+    """Byte-offset (start, end) spans of human-pass-protected content -- the
+    text between <!-- hp:start --> and <!-- hp:end --> markers, excluding
+    the markers themselves. An unpaired or missing marker simply produces no
+    span for that position; this never raises.
+    """
+    return [(m.start(1), m.end(1)) for m in _HP_SPAN.finditer(text)]
+
+
+# --------------------------------------------------------------------------
+# Close-proximity repetition ("echo")
+#
+# repeated_ngrams (below) and lint's phrase watchlist both find a tic
+# repeated across a whole manuscript. Neither catches a distinctive word
+# used twice in the same breath -- "he shouldered the door open, the
+# shoulder strap still biting" -- which a line editor calls an echo and a
+# reader notices even in an otherwise clean chapter. Same class of problem
+# as opener_monotony (lint.py), but at word-proximity rather than
+# paragraph-position granularity.
+# --------------------------------------------------------------------------
+
+def window_echoes(
+    text: str,
+    *,
+    window_words: int = 50,
+    min_word_len: int = 5,
+    exclude: Set[str] = frozenset(),
+) -> List[Tuple[str, int]]:
+    """Distinctive content words that repeat within a close word-window.
+
+    Returns one ``(word, gap)`` pair per close repeat found -- so a word
+    echoing three times in one paragraph produces two entries, one per
+    consecutive pair, each recording how many words separated that pair.
+    ``exclude`` should hold character/place names (see detect_names):
+    legitimate repetition of a name is not an echo.
+    """
+    hits: List[Tuple[str, int]] = []
+    last_seen: Dict[str, int] = {}
+    for idx, tok in enumerate(_tokens(text)):
+        if len(tok) < min_word_len or tok in FUNCTION_WORDS or tok in exclude:
+            continue
+        prev = last_seen.get(tok)
+        if prev is not None and (idx - prev) <= window_words:
+            hits.append((tok, idx - prev))
+        last_seen[tok] = idx
+    return hits
+
+
+_PARAGRAPH_SPLIT = re.compile(r"\n\s*\n")
+_LEADING_QUOTE = re.compile(r"^[\"'“‘]+")
+
+
+def sentence_opener_repeats(
+    text: str, *, min_consecutive: int = 3,
+) -> List[Tuple[str, int]]:
+    """Runs of consecutive sentences, inside one paragraph, that open on the
+    same word -- e.g. "She stood. She watched. She waited." This is
+    narrower than lint's paragraph-opener watchlist, which looks at
+    paragraph-initial words across the whole manuscript: a paragraph can
+    read as flat and mechanical on its own even when the manuscript-wide
+    opener distribution looks fine, because the watchlist only sees where
+    each *paragraph* starts, never what happens sentence-to-sentence inside
+    one.
+
+    Returns ``(word, run_length)`` for every run of at least
+    ``min_consecutive`` sentences sharing an opening word.
+    """
+    hits: List[Tuple[str, int]] = []
+    for para in _PARAGRAPH_SPLIT.split(text):
+        para = para.strip()
+        if not para:
+            continue
+        sentences = [s.strip() for s in SENTENCE_SPLIT.split(para) if s.strip()]
+        run_word: str | None = None
+        run_len = 0
+        for sentence in sentences:
+            clean = _LEADING_QUOTE.sub("", sentence).strip()
+            first = WORD.findall(clean)[:1]
+            word = first[0].lower() if first else None
+            if word and word == run_word:
+                run_len += 1
+            else:
+                if run_word and run_len >= min_consecutive:
+                    hits.append((run_word, run_len))
+                run_word, run_len = word, 1
+        if run_word and run_len >= min_consecutive:
+            hits.append((run_word, run_len))
+    return hits
+
 
 # --------------------------------------------------------------------------
 # Repeated n-grams
@@ -487,6 +626,52 @@ def voice_collisions(
     return collisions
 
 
+def speaker_drift(
+    first_third_by_speaker: Dict[str, List[str]],
+    last_third_by_speaker: Dict[str, List[str]],
+    *,
+    min_lines: int = 5,
+    line_word_gap: float = 1.5,
+    question_gap: float = 0.10,
+    contraction_gap: float = 0.02,
+) -> Tuple[List[Tuple[str, str]], List[str]]:
+    """Speaker pairs that were distinguishable early in the manuscript but
+    collide (per voice_collisions) by the end -- voices converging over a
+    long book, which no single-chapter check can see.
+
+    Returns (converging_pairs, insufficient_data). A pair only counts as
+    "converging" if it was NOT a collision in the first third and IS one in
+    the last third -- pairs that collided from the start are an existing
+    voice_collisions finding, not drift.
+
+    `insufficient_data` names every speaker present in either third who
+    doesn't clear `min_lines` in BOTH thirds (the same floor speaker_stats
+    applies). In one third of a book, secondary characters routinely fall
+    below it -- for those, "not converging" would be a false negative
+    dressed as a clean result, so they are reported as a separate,
+    explicit "not enough dialogue to tell" finding instead of being folded
+    silently into "no drift detected."
+    """
+    early_stats = speaker_stats(first_third_by_speaker, min_lines=min_lines)
+    late_stats = speaker_stats(last_third_by_speaker, min_lines=min_lines)
+    early_names = {s.speaker for s in early_stats}
+    late_names = {s.speaker for s in late_stats}
+
+    early_collisions = set(voice_collisions(
+        early_stats, line_word_gap=line_word_gap,
+        question_gap=question_gap, contraction_gap=contraction_gap))
+    late_collisions = set(voice_collisions(
+        late_stats, line_word_gap=line_word_gap,
+        question_gap=question_gap, contraction_gap=contraction_gap))
+    converging = sorted(late_collisions - early_collisions)
+
+    all_speakers = (set(first_third_by_speaker) | set(last_third_by_speaker)) - {"?"}
+    tracked = early_names & late_names
+    insufficient = sorted(all_speakers - tracked)
+
+    return converging, insufficient
+
+
 # --------------------------------------------------------------------------
 # Readability
 # --------------------------------------------------------------------------
@@ -576,6 +761,19 @@ def load_chapters(chapter_dir: Path) -> Dict[str, str]:
         p.name: p.read_text(encoding="utf-8")
         for p in sorted(chapter_dir.glob("*.md")) if p.is_file()
     }
+
+
+def resolve_chapters_dir(target: Path) -> Path:
+    """Accept either a project root or a chapters directory directly.
+
+    Every CLI command that analyzes a manuscript takes `path` as either the
+    project root (chapters live at `path/manuscript/chapters`) or the
+    chapters directory itself (so `path` already ends in `chapters`). This
+    was three identical inline copies of the same one-liner (previously at
+    cli.py's lint/structure/proof handlers) -- kept as one function so a
+    fourth analysis command doesn't grow a fourth copy.
+    """
+    return target if target.name == "chapters" else target / "manuscript" / "chapters"
 
 
 def detect_names(text: str, *, min_count: int = 3, top: int = 15) -> List[str]:

@@ -22,11 +22,33 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 import re
-from typing import Callable, Dict, List
+from typing import Callable, Dict, List, Set
 
 from runner import discover, lint, proof, timeline
 
 CheckFn = Callable[[Path, List[str]], "CheckResult"]
+
+# Checks whose thresholds are new or not yet calibrated against real
+# manuscripts. They run on every gate and report their true status, but a
+# fail/error here never blocks `GateVerdict.ok` -- so `advance_phase` still
+# advances and the check stays *visible* instead of silently disabled.
+# Promotion to a real, blocking gate is deleting the name from this set.
+#
+# Do not "fix" a fail-here by downgrading the result's status to pass inside
+# run_check: that would print PASS in the gate table and in --json, which
+# hides the finding instead of flagging it. advisory=True is what keeps the
+# real status visible while keeping it non-blocking.
+#
+# "macro" (runner/macro.py): book-level template detection -- chapter
+# opening/closing mode share, scene-break uniformity, title parallelism.
+# "texture" (runner/texture.py): texture-bank source/coverage checks.
+# "voice_lexicon" (runner/voicelexicon.py): never_say checks against
+# attributed dialogue -- a real hit is a real problem, but the underlying
+# speaker-attribution primitive (discover.dialogue_by_speaker) has known
+# false-negative cases (see its docstring), so a clean run here is not yet
+# trustworthy enough to block on.
+# None of these three are calibrated against a real corpus yet.
+ADVISORY_CHECKS: Set[str] = {"macro", "texture", "voice_lexicon"}
 
 
 @dataclass
@@ -36,6 +58,7 @@ class CheckResult:
     summary: str
     detail: str = ""
     report_path: str = ""
+    advisory: bool = False
 
 
 @dataclass
@@ -49,11 +72,23 @@ class GateVerdict:
     def ok(self) -> bool:
         if self.pending_outputs:
             return False
-        return not any(r.status in ("fail", "error") for r in self.results)
+        return not any(
+            r.status in ("fail", "error") and not r.advisory for r in self.results)
 
     @property
     def blocking(self) -> List[CheckResult]:
-        return [r for r in self.results if r.status in ("fail", "error")]
+        return [
+            r for r in self.results
+            if r.status in ("fail", "error") and not r.advisory
+        ]
+
+    @property
+    def advisory_flagged(self) -> List[CheckResult]:
+        """Advisory checks that failed or errored -- visible, not blocking."""
+        return [
+            r for r in self.results
+            if r.status in ("fail", "error") and r.advisory
+        ]
 
 
 # --------------------------------------------------------------------------
@@ -88,6 +123,7 @@ def check_timeline_check(target: Path, args: List[str]) -> CheckResult:
 
 def check_lint_check(target: Path, args: List[str]) -> CheckResult:
     from runner.filesystem import state_get  # local import: avoid a cycle
+    from runner.styleprofile import STYLE_PROFILE_FILENAME, resolve_thresholds  # local import: avoid a cycle
 
     chapters = _chapters_dir(target)
     if not chapters.is_dir() or not any(chapters.glob("*.md")):
@@ -100,8 +136,14 @@ def check_lint_check(target: Path, args: List[str]) -> CheckResult:
             or state_get(target, "project.subgenre")
             or state_get(target, "project.genre")
         )
-    report = lint.lint_manuscript(chapters, profile=profile)
-    text = lint.render_report(report)
+    # Honor the same personal style-profile.yaml the `lint` CLI command
+    # uses, so the gate that actually blocks advance_phase doesn't diverge
+    # from what a manual `python3 runner/cli.py lint` reports.
+    thresholds, style_warnings = resolve_thresholds(
+        profile=profile, style_profile_path=target / STYLE_PROFILE_FILENAME)
+    report = lint.lint_manuscript(chapters, profile=profile, thresholds=thresholds)
+    text = "\n".join(f"warning: {w}" for w in style_warnings)
+    text += ("\n\n" if text else "") + lint.render_report(report)
     if report.failed:
         fails = [f for f in report.findings if f.severity == "fail"]
         return CheckResult(
@@ -151,7 +193,11 @@ def check_wordcount(target: Path, args: List[str]) -> CheckResult:
     if not chapters.is_dir():
         return CheckResult("wordcount", "skip", "no chapters directory")
     texts = discover.load_chapters(chapters)
-    total = sum(len(discover.WORD.findall(t)) for t in texts.values())
+    # Editorial comments are not prose and must not count toward the target.
+    total = sum(
+        len(discover.WORD.findall(discover.strip_comments(t)))
+        for t in texts.values()
+    )
 
     lo, hi = target_words * min_mult, target_words * max_mult
     if not (lo <= total <= hi):
@@ -173,6 +219,103 @@ def check_proof(target: Path, args: List[str]) -> CheckResult:
         fails = [i for i in report.issues if i.severity == "fail"]
         return CheckResult("proof", "fail", f"{len(fails)} typographic defect(s)", text)
     return CheckResult("proof", "pass", "no typographic defects", text)
+
+
+def check_macro(target: Path, args: List[str]) -> CheckResult:
+    from runner import macro  # local import: avoid a cycle
+    from runner.filesystem import state_get  # local import: avoid a cycle
+
+    chapters = _chapters_dir(target)
+    if not chapters.is_dir() or not any(chapters.glob("*.md")):
+        return CheckResult("macro", "skip", "no chapters to analyze")
+    language = state_get(target, "project.language").strip().lower()
+    if language and not language.startswith("en"):
+        # MAXIM_MARKERS/CONCRETE_MARKERS (imported from lint.py) and the
+        # dialogue-quote-character classification are English-word and
+        # Latin-quote-convention heuristics; running them against another
+        # language's prose would silently mismeasure it rather than say so.
+        return CheckResult(
+            "macro", "skip", f"language={language!r} -- macro's heuristics are English-only")
+    report = macro.macro_manuscript(chapters)
+    if report.skipped:
+        return CheckResult("macro", "skip", report.skipped)
+    text = macro.render_macro_report(report)
+    if report.findings:
+        # Every finding this module produces is internally "warn" severity
+        # (see macro.py's docstring): none of these thresholds are
+        # calibrated yet, so this check is registered in ADVISORY_CHECKS
+        # below and never blocks GateVerdict.ok regardless of this status.
+        # "fail" here means "worth a human's attention", not "broken".
+        return CheckResult(
+            "macro", "fail", f"{len(report.findings)} macro-structure pattern(s) flagged", text)
+    return CheckResult("macro", "pass", "no macro-structure patterns flagged", text)
+
+
+def check_texture(target: Path, args: List[str]) -> CheckResult:
+    from runner import texture  # local import: avoid a cycle
+
+    bank_path = target / texture.TEXTURE_BANK_NAME
+    if not bank_path.is_file():
+        # No bank is the normal case for a project that hasn't run a
+        # texture-research pass -- not a defect, unlike an unparsable one.
+        return CheckResult("texture", "skip", "no texture bank at research/texture-bank.md")
+    chapters = _chapters_dir(target)
+    report = texture.texture_manuscript(bank_path, chapters)
+    text = texture.render_texture_report(report)
+    if report.failed:
+        fails = [f for f in report.findings if f.severity == "fail"]
+        return CheckResult("texture", "fail", f"{len(fails)} texture-bank parse error(s)", text)
+    if report.findings:
+        # Coverage/src findings are all "warn" severity internally -- see
+        # texture.py's docstring -- but this check is registered in
+        # ADVISORY_CHECKS below regardless, same reasoning as "macro".
+        return CheckResult(
+            "texture", "fail", f"{len(report.findings)} texture-bank finding(s) flagged", text)
+    return CheckResult("texture", "pass", "texture bank clean", text)
+
+
+def check_human_pass(target: Path, args: List[str]) -> CheckResult:
+    from runner.filesystem import state_get  # local import: avoid a cycle
+
+    chapters = _chapters_dir(target)
+    if not chapters.is_dir() or not any(chapters.glob("*.md")):
+        return CheckResult("human_pass", "skip", "no chapters yet")
+
+    if state_get(target, "project.skip_human_pass").strip().lower() in ("true", "1", "yes"):
+        return CheckResult(
+            "human_pass", "pass",
+            "human pass explicitly skipped (project.skip_human_pass=true)")
+
+    worksheet = target / "work" / "human-pass.md"
+    if not worksheet.is_file():
+        return CheckResult(
+            "human_pass", "fail",
+            "no work/human-pass.md",
+            "Run `python3 runner/cli.py human-pass plan <project>` and hand-rewrite "
+            "at least the lines you want protected, then `human-pass apply`. Or set "
+            "project.skip_human_pass=true to opt out (e.g. a mechanical demo with no "
+            "human in the loop).\n\n"
+            "This check verifies the worksheet was generated, not that a human "
+            "reviewed it -- that judgment belongs to the delivery checkpoint, not to "
+            "a deterministic check.",
+        )
+    return CheckResult("human_pass", "pass", "human-pass worksheet exists")
+
+
+def check_voice_lexicon(target: Path, args: List[str]) -> CheckResult:
+    from runner import voicelexicon  # local import: avoid a cycle
+
+    lexicon_path = target / voicelexicon.VOICE_LEXICON_NAME
+    chapters = _chapters_dir(target)
+    report = voicelexicon.check_lexicon(lexicon_path, chapters)
+    if report.skipped:
+        return CheckResult("voice_lexicon", "skip", report.skipped)
+    text = voicelexicon.render_report(report)
+    if report.violations:
+        return CheckResult(
+            "voice_lexicon", "fail",
+            f"{len(report.violations)} never_say violation(s)", text)
+    return CheckResult("voice_lexicon", "pass", "no never_say violations", text)
 
 
 def check_book_meta(target: Path, args: List[str]) -> CheckResult:
@@ -207,6 +350,10 @@ CHECK_REGISTRY: Dict[str, CheckFn] = {
     "proof": check_proof,
     "book_meta": check_book_meta,
     "epub": check_epub,
+    "macro": check_macro,
+    "texture": check_texture,
+    "human_pass": check_human_pass,
+    "voice_lexicon": check_voice_lexicon,
 }
 
 
@@ -215,15 +362,26 @@ def run_check(target: Path, token: str) -> CheckResult:
     name, args = parts[0], parts[1:]
     fn = CHECK_REGISTRY.get(name)
     if fn is None:
+        # An unknown token is deliberately NOT advisory, even if `name`
+        # happens to collide with an ADVISORY_CHECKS entry -- a manifest typo
+        # must still be visible as an error, not silently swallowed twice
+        # over.
         return CheckResult(
             name, "error", f"unknown check {name!r}",
             f"Registered checks: {', '.join(sorted(CHECK_REGISTRY))}. "
             "A manifest typo must not silently disable a gate.",
         )
+    advisory = name in ADVISORY_CHECKS
     try:
-        return fn(target, args)
+        result = fn(target, args)
     except Exception as exc:  # noqa: BLE001 - a check crashing must block, not vanish
-        return CheckResult(name, "error", f"check raised {type(exc).__name__}: {exc}")
+        # Covers ADVISORY_CHECKS too: an uncalibrated new module that raises
+        # on real prose must not hard-block the pipeline either.
+        return CheckResult(
+            name, "error", f"check raised {type(exc).__name__}: {exc}",
+            advisory=advisory)
+    result.advisory = advisory
+    return result
 
 
 def run_phase_checks(target: Path, checks: List[str]) -> List[CheckResult]:
@@ -262,8 +420,15 @@ def render_gate_report(verdict: GateVerdict) -> str:
     lines.append("| Check | Status | Summary |")
     lines.append("|---|---|---|")
     for r in verdict.results:
-        lines.append(f"| {r.name} | {r.status.upper()} | {r.summary} |")
+        marker = " (advisory)" if r.advisory else ""
+        lines.append(f"| {r.name} | {r.status.upper()}{marker} | {r.summary} |")
     lines.append("")
+
+    if verdict.advisory_flagged:
+        lines.append(
+            "**Advisory checks flagged (not blocking):** "
+            + ", ".join(f"{r.name} ({r.status})" for r in verdict.advisory_flagged))
+        lines.append("")
 
     for r in verdict.results:
         if not r.detail:

@@ -19,6 +19,8 @@ import re
 import unicodedata
 from typing import Dict, List, Tuple
 
+from runner.discover import strip_comments
+
 CURLY_OPEN = "“"
 CURLY_CLOSE = "”"
 CURLY_APOS = "’"
@@ -374,7 +376,18 @@ def proof_manuscript(chapter_dir: Path, *, style: ProofStyle | None = None) -> P
             files=0,
         )
 
-    texts = {p.name: p.read_text(encoding="utf-8") for p in files}
+    # Blank out editorial comments while keeping every byte offset and line
+    # number intact, so reported line numbers still match the file on disk.
+    # Without this, `<!--`/`-->` register as double-hyphen dashes and every
+    # comment-bearing chapter reports a false "mixed dash styles".
+    # `x` rather than a space: a blanked comment made of spaces would itself
+    # trip the doubled-space check, and one made of `#` or `-` would look like
+    # a scene break. A run of letters is inert against every detector below.
+    texts = {
+        p.name: strip_comments(
+            p.read_text(encoding="utf-8"), preserve_layout=True, fill="x")
+        for p in files
+    }
     resolved_style = style or detect_style(texts)
 
     issues: List[ProofIssue] = []

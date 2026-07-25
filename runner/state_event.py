@@ -60,12 +60,18 @@ EVENT_ALLOWLIST: Dict[str, List[str]] = {
     "package-update": ["decisions"],
     "decision": ["decisions"],
     "adoption": ["project", "chapters"],
+    "human-pass": ["human_pass"],
+    "config-update": ["runtime"],
 }
 
 # Event types that must carry an explicit approval note before they apply.
 # This encodes "never bypass a human gate" as a check the engine enforces,
 # not just a line in a prompt the orchestrator might forget to follow.
-REQUIRES_APPROVAL = {"phase-advance", "package-update"}
+# "human-pass" belongs here for the same reason "phase-advance" does: it IS
+# the human gate (CHECKPOINT 3, agents/book-orchestrator.md) -- recording it
+# without an approval note would let an agent wave the checkpoint through
+# unattended.
+REQUIRES_APPROVAL = {"phase-advance", "package-update", "human-pass"}
 
 RETRYABLE_CODES = {"schema-validation", "reference-validation", "stale-phase"}
 

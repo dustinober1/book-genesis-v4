@@ -35,8 +35,12 @@ from runner.discover import (  # noqa: E402
     modern_register_hits,
     presence_matrix,
     repeated_ngrams,
+    sentence_opener_repeats,
+    speaker_drift,
     speaker_stats,
+    strip_comments,
     voice_collisions,
+    window_echoes,
 )
 
 
@@ -74,6 +78,24 @@ class LintTests(unittest.TestCase):
         self.assertTrue(found, "expected em dash density failure")
         self.assertEqual("fail", found[0].severity)
 
+    def test_writer_header_comment_not_counted_as_em_dash(self) -> None:
+        # agents/book-writer.md mandates a `<!-- Word count: X | Target: Y |
+        # Anchor: ... -->` header on every chapter. `<!--`/`-->` each contain
+        # `--`, which analyze_chapter used to count as an em dash before
+        # _strip_markdown learned to drop comments -- one header alone was
+        # +2 phantom em dashes per chapter, and human-pass span markers
+        # (`<!-- hp:start -->`) would add two more per span.
+        body = (
+            "<!-- Word count: 900 | Target: 900 | Anchor: the door -->\n\n"
+            + "She set the bread on the table and counted the jars again. " * 40
+        )
+        self._write("ch01.md", body)
+        report = lint_manuscript(self.chapters)
+        self.assertFalse(
+            _findings(report, "em_dash_density"),
+            "a metadata comment must not register as prose em dashes",
+        )
+
     def test_phrase_repetition_flagged(self) -> None:
         body = ("I did not know exactly what he meant by that particular remark. "
                 * 40)
@@ -98,6 +120,50 @@ class LintTests(unittest.TestCase):
         self._write("ch01.md", "\n\n".join(paras))
         report = lint_manuscript(self.chapters)
         self.assertTrue(_findings(report, "opener_monotony"))
+
+    def test_word_echo_flagged(self) -> None:
+        body = " ".join(
+            f"He shouldered the door. His shoulder ached from the strap. "
+            f"Row {i} was still empty." for i in range(20)
+        )
+        self._write("ch01.md", body)
+        report = lint_manuscript(self.chapters)
+        flagged = {f.measured.split('"')[1] for f in _findings(report, "word_echo")}
+        self.assertIn("shoulder", flagged)
+
+    def test_word_echo_excludes_character_names(self) -> None:
+        # Repeating a character's name in close proximity is normal prose,
+        # not a tic -- detect_names should keep it out of the echo scan.
+        # detect_names deliberately excludes tokens that are sentence-initial
+        # >=85% of the time (indistinguishable from a capitalized opener), so
+        # the name must also appear mid-sentence to register as a name --
+        # exactly how a real character's name reads across a chapter.
+        body = " ".join(
+            f"Mira found Devon by the window. Devon looked out at row {i}. "
+            f"She watched Devon say nothing at all." for i in range(20)
+        )
+        self._write("ch01.md", body)
+        report = lint_manuscript(self.chapters)
+        flagged = {f.measured.split('"')[1] for f in _findings(report, "word_echo")}
+        self.assertNotIn("devon", flagged)
+
+    def test_sentence_opener_repeat_flagged(self) -> None:
+        para = (
+            "She stood at the window. She watched the street below. "
+            "She waited for the car to turn the corner. She did not move."
+        )
+        self._write("ch01.md", para)
+        report = lint_manuscript(self.chapters)
+        self.assertTrue(_findings(report, "sentence_opener_repeat"))
+
+    def test_varied_sentence_openers_not_flagged(self) -> None:
+        para = (
+            "She stood at the window. Rain streaked the glass. "
+            "Somewhere a dog barked twice. The street stayed empty."
+        )
+        self._write("ch01.md", para)
+        report = lint_manuscript(self.chapters)
+        self.assertFalse(_findings(report, "sentence_opener_repeat"))
 
     def test_maxim_endings_flagged(self) -> None:
         for i in range(6):
@@ -182,6 +248,30 @@ class LintTests(unittest.TestCase):
             self._write(f"ch{i:02d}.md", body)
         report = lint_manuscript(self.chapters)
         self.assertFalse(_findings(report, "phrase_escalation"))
+
+    def test_voice_drift_flagged_across_manuscript_thirds(self) -> None:
+        early_dialogue = (
+            '"Do you think so? Really?" asked Mary. "No." said John. '
+        )
+        late_dialogue = '"Fine." said Mary. "Fine." said John. '
+        # 9 chapters, thirds of 3: first-third chapters carry distinguishable
+        # dialogue, last-third chapters carry converged dialogue.
+        for i in range(9):
+            dialogue = early_dialogue if i < 3 else late_dialogue
+            body = "She set the bread down and waited by the door. " * 15 + dialogue * 3
+            self._write(f"ch{i:02d}.md", body)
+        report = lint_manuscript(self.chapters)
+        found = _findings(report, "voice_drift")
+        self.assertTrue(found, "expected voice drift warning")
+        self.assertIn("Mary / John", found[0].citations)
+
+    def test_voice_drift_not_flagged_when_still_differentiated(self) -> None:
+        for i in range(9):
+            dialogue = '"Do you think so? Really?" asked Mary. "No." said John. '
+            body = "She set the bread down and waited by the door. " * 15 + dialogue * 3
+            self._write(f"ch{i:02d}.md", body)
+        report = lint_manuscript(self.chapters)
+        self.assertEqual([], _findings(report, "voice_drift"))
 
     def test_adverb_density_flagged(self) -> None:
         body = "She quickly quietly softly slowly carefully gently ran home. " * 30
@@ -436,6 +526,94 @@ class DiscoverTests(unittest.TestCase):
         text = ('"Do you think so? Truly?" asked Mary. ' * 8) + ('"No." said John. ' * 8)
         stats = speaker_stats(dialogue_by_speaker(text)[0])
         self.assertEqual([], voice_collisions(stats))
+
+    def test_speaker_drift_detects_convergence(self) -> None:
+        early = ('"Do you think so? Really?" asked Mary. ' * 6) + ('"No." said John. ' * 6)
+        late = ('"Fine." said Mary. ' * 6) + ('"Fine." said John. ' * 6)
+        early_by, _ = dialogue_by_speaker(early)
+        late_by, _ = dialogue_by_speaker(late)
+        converging, insufficient = speaker_drift(early_by, late_by)
+        self.assertEqual([("Mary", "John")], converging)
+        self.assertEqual([], insufficient)
+
+    def test_speaker_drift_none_when_still_differentiated(self) -> None:
+        early = ('"Do you think so? Really?" asked Mary. ' * 6) + ('"No." said John. ' * 6)
+        late = ('"Are you certain? Truly?" asked Mary. ' * 6) + ('"Never." said John. ' * 6)
+        early_by, _ = dialogue_by_speaker(early)
+        late_by, _ = dialogue_by_speaker(late)
+        converging, _ = speaker_drift(early_by, late_by)
+        self.assertEqual([], converging)
+
+    def test_speaker_drift_reports_insufficient_data_not_no_drift(self) -> None:
+        # Mary has plenty of lines in both thirds; a secondary with too few
+        # lines in the LAST third must be reported separately, not silently
+        # counted as "no drift".
+        early = ('"Do you think so? Really?" asked Mary. ' * 6) + ('"No." said Devon. ' * 6)
+        late = '"Fine." said Mary. ' * 6  # Devon has zero lines in the last third
+        early_by, _ = dialogue_by_speaker(early)
+        late_by, _ = dialogue_by_speaker(late)
+        converging, insufficient = speaker_drift(early_by, late_by)
+        self.assertEqual([], converging)
+        self.assertIn("Devon", insufficient)
+        self.assertNotIn("Mary", insufficient)
+
+    def test_strip_comments_removes_inline(self) -> None:
+        text = "Before.\n\n<!-- Word count: 900 -->\n\nAfter.\n"
+        self.assertEqual("Before.\n\n\n\nAfter.\n", strip_comments(text))
+
+    def test_strip_comments_removes_multiline(self) -> None:
+        text = "Before.\n\n<!-- hp:start -->\nMiddle.\n<!-- hp:end -->\n\nAfter.\n"
+        cleaned = strip_comments(text)
+        self.assertNotIn("<!--", cleaned)
+        self.assertNotIn("-->", cleaned)
+        self.assertIn("Middle.", cleaned)  # only the markers are comments; the
+        # content they wrap is real prose and must survive
+
+    def test_strip_comments_preserve_layout_keeps_offsets(self) -> None:
+        text = "Before.\n<!-- note -->\nAfter.\n"
+        cleaned = strip_comments(text, preserve_layout=True, fill="x")
+        self.assertEqual(len(text), len(cleaned))
+        self.assertEqual(text.count("\n"), cleaned.count("\n"))
+        self.assertNotIn("<!--", cleaned)
+
+    def test_strip_comments_no_comment_is_a_noop(self) -> None:
+        text = "Plain prose with an em dash — right here.\n"
+        self.assertEqual(text, strip_comments(text))
+
+    def test_window_echoes_finds_close_repeat(self) -> None:
+        text = "The shoulder ached. Ten words later the shoulder still ached badly."
+        hits = window_echoes(text, window_words=50)
+        words = {w for w, _gap in hits}
+        self.assertIn("shoulder", words)
+
+    def test_window_echoes_ignores_far_repeats(self) -> None:
+        filler = " ".join(f"word{i}" for i in range(60))
+        text = f"shoulder {filler} shoulder"
+        hits = window_echoes(text, window_words=50)
+        self.assertEqual([], hits)
+
+    def test_window_echoes_respects_exclude_set(self) -> None:
+        text = "Devon spoke. Devon listened. Devon left the room."
+        hits = window_echoes(text, window_words=50, exclude={"devon"})
+        self.assertEqual([], hits)
+
+    def test_window_echoes_ignores_short_and_function_words(self) -> None:
+        text = "the the the that that that this this this here here here"
+        self.assertEqual([], window_echoes(text, window_words=50))
+
+    def test_sentence_opener_repeats_finds_run(self) -> None:
+        para = "She stood. She watched. She waited. She left."
+        hits = sentence_opener_repeats(para, min_consecutive=3)
+        self.assertEqual([("she", 4)], hits)
+
+    def test_sentence_opener_repeats_below_minimum_not_flagged(self) -> None:
+        para = "She stood. She watched. Rain fell outside."
+        self.assertEqual([], sentence_opener_repeats(para, min_consecutive=3))
+
+    def test_sentence_opener_repeats_does_not_cross_paragraphs(self) -> None:
+        text = "She stood. She watched.\n\nShe waited. She left."
+        # Two runs of 2 in separate paragraphs, never merged into a run of 4.
+        self.assertEqual([], sentence_opener_repeats(text, min_consecutive=3))
 
 
 if __name__ == "__main__":

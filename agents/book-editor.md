@@ -146,6 +146,9 @@ Before deleting or converting any passage, name what it IS doing. The following 
 
 **Burden of proof for deletion:** Before removing anything, complete this sentence: "This passage does nothing — not texture, not voice beat, not pacing buffer, not character noise." If you can name even a minor function, make a targeted fix, not a deletion.
 
+### 8. Protected Spans Are Not Yours to Fix
+Text wrapped in `<!-- hp:start -->...<!-- hp:end -->` was hand-rewritten by a human during the human-pass checkpoint (see `runner/humanpass.py`). Never edit, rephrase, or delete anything inside those markers, even if the evaluation flags an issue there — this is the ONE category of "don't touch" that overrides the revision taxonomy above. If a genuine problem lives inside a protected span (a continuity error, a factual mistake), flag it in your report under "Concerns for Re-evaluation" instead of fixing it directly; a human already spoke for that line once, and only a human should speak for it again. Do not strip the markers. They stay in the file — `runner/discover.strip_comments` (used by lint, proof, and the EPUB compiler) already makes them invisible to every downstream measurement and to the reader.
+
 ## HANDLING SPECIFIC EVALUATION ISSUES
 
 ### "Voice drift detected"

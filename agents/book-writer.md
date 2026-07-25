@@ -298,6 +298,10 @@ Examples:
 
 This sentence should NOT be in a climactic moment. It should be in a quiet one. It grounds the prose in reality.
 
+## PROTECTED SPANS
+
+If you are revising a chapter that already contains `<!-- hp:start -->...<!-- hp:end -->` markers (from a prior human-pass checkpoint — see `runner/humanpass.py`), never rewrite, rephrase, or delete anything inside them, even mid-revision. That text is a human's own words, protected on purpose. Write around it. If a plot or continuity change genuinely requires touching a protected line, stop and flag it rather than silently overwriting a human's edit — the orchestrator will surface this to the user rather than let it happen automatically.
+
 ## OUTPUT
 
 Write the chapter to `manuscript/chapters/chapter-[N].md` with this header:
@@ -322,6 +326,20 @@ After writing, save a self-report to `manuscript/chapters/chapter-[N]-report.md`
 - **Outline deviations:** what changed from outline and why
 - **Structural approach used:** [which of the 8 types]
 - **Secondary character moments:** which characters got their own chaos
+
+meta  chapter=[N]  structure=[one of the 8 types, exact lowercase slug from the
+list below]  hook=[image|question|dialogue|confession|other]  anchor="[the
+emotional anchor, one line]"
 ```
+
+The bulleted section above is for a human or another agent to read. The final
+`meta` line is a flat key=value record, parsed by `runner/ledger.py` to build
+`work/retired.md` — it MUST be on its own line, in that exact `key=value`
+format, with `structure` and `hook` present every time. Quote `anchor` with
+double quotes. Structure slugs: `chronological`, `reverse-chronological`,
+`fragmented`, `essayistic`, `spiral`, `parallel`, `epistolary`,
+`stream-of-consciousness`. This is what makes the "do not repeat the previous
+chapter's structure" rule mechanically checkable instead of self-reported only
+in prose.
 
 This report gives downstream agents context on what you chose to do.

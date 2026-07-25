@@ -101,6 +101,37 @@ class CompileTests(unittest.TestCase):
         self.assertIn("<blockquote>", html)
         self.assertIn("scene-break", html)
 
+    def test_writer_header_comment_does_not_leak_into_xhtml(self) -> None:
+        # agents/book-writer.md mandates a `<!-- Word count: X | Target: Y |
+        # Anchor: ... -->` header on every chapter. Before md_to_xhtml_body
+        # stripped comments, `<!` fell through the `_FORBIDDEN` guard (which
+        # only rejects `^\s*<[a-zA-Z]`) into the paragraph branch and got
+        # XML-escaped, so every compiled EPUB opened with a visible
+        # "<!-- Word count: ... -->" line.
+        html = md_to_xhtml_body(
+            "# Chapter 1: Test\n\n"
+            "<!-- Word count: 3200 | Target: 3000 | Anchor: the phone -->\n\n"
+            "She set the bread on the table.\n",
+            source="test.md",
+        )
+        self.assertNotIn("Word count", html)
+        self.assertNotIn("&lt;!--", html)
+        self.assertNotIn("<!--", html)
+        self.assertIn("She set the bread on the table.", html)
+
+    def test_multiline_comment_does_not_swallow_surrounding_paragraphs(self) -> None:
+        # A comment spanning its own blank-line-delimited block (e.g. a
+        # human-pass `<!-- hp:start -->`/`<!-- hp:end -->` pair) must not
+        # merge the paragraphs before and after it into one <p>.
+        html = md_to_xhtml_body(
+            "Before the comment.\n\n"
+            "<!-- hp:start -->\n\n"
+            "After the comment.\n",
+            source="test.md",
+        )
+        self.assertIn("<p>Before the comment.</p>", html)
+        self.assertIn("<p>After the comment.</p>", html)
+
     def test_compile_manuscript_md_produces_single_file(self) -> None:
         meta = load_book_meta(self.tempdir)
         path = compile_manuscript_md(self.tempdir, meta)

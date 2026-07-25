@@ -5,18 +5,28 @@ LLMs cannot reliably count 228 em dashes or notice that 85 paragraphs open with
 "I did not" - that is what code is for. The agent-side prompts handle judgment;
 this module handles arithmetic.
 
+English only, throughout. FUNCTION_WORDS, ADVERB_EXCLUDE, DIALOGUE_TAG_VERBS
+(discover.py), MAXIM_MARKERS/CONCRETE_MARKERS, and the phrase watchlists
+below are all English lexicons -- every check in this module, including
+word_echo and voice_drift, will silently mismeasure non-English prose rather
+than say so. This is a known, unresolved gap (this repo ships
+README.pt-BR.md and a Portuguese beta-reader skill) -- gates.py's
+check_macro is the one check in this package that currently guards on
+project.language; lint_manuscript does not yet, and shouldn't be assumed to.
+
 No external dependencies, matching the rest of runner/.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 import re
 from typing import Dict, List, Tuple
 
 from runner.discover import (
     adverb_density,
+    detect_names,
     dialogue_by_speaker,
     dialogue_ratio,
     dialogue_tag_counts,
@@ -25,8 +35,12 @@ from runner.discover import (
     line_defects,
     modern_register_hits,
     repeated_ngrams,
+    sentence_opener_repeats,
+    speaker_drift,
     speaker_stats,
+    strip_comments,
     voice_collisions,
+    window_echoes,
 )
 
 # --------------------------------------------------------------------------
@@ -164,6 +178,23 @@ class Thresholds:
     min_tag_sample: int = 20
     said_tag_share_min: float = 0.6
 
+    # Word echo: a distinctive word repeating within a close window reads as
+    # unintentional even when the manuscript-wide phrase-repetition numbers
+    # are clean. Unlike every other default in this file, no editorial
+    # report seeded this number -- it is a first-pass estimate pending
+    # per-project calibration against the author's own writing (see
+    # runner/corpus.py). Treat a hit here as "go read this line", not as
+    # settled evidence the way em_dash_per_1k is.
+    echo_window_words: int = 50
+    echo_min_word_len: int = 5
+    echo_per_10k: float = 3.0
+
+    # Sentence-opener repeats: 3+ consecutive sentences inside one paragraph
+    # sharing an opening word. Narrower and rarer than opener_monotony
+    # (which counts across the whole manuscript), so the bar for flagging is
+    # a raw run length, not a density.
+    opener_repeat_run_min: int = 3
+
     @staticmethod
     def for_profile(profile: str) -> "Thresholds":
         """Genre/length profiles. Literary prose tolerates fewer AI tells."""
@@ -191,6 +222,20 @@ class Thresholds:
                 dialogue_ratio_min=0.25, dialogue_ratio_max=0.40)
         return Thresholds()
 
+    def with_overrides(self, overrides: Dict[str, float]) -> "Thresholds":
+        """Apply per-project overrides (from a style-profile.yaml) on top of
+        this genre profile. `frozen=True` blocks in-place mutation on
+        purpose -- this returns a new instance via dataclasses.replace,
+        which also means an unknown field name raises TypeError rather than
+        silently doing nothing.
+
+        Values must already be coerced to the field's declared type (float
+        or int) -- runner/styleprofile.py owns that coercion and reports
+        unknown keys before this is ever called, so this method can stay a
+        thin wrapper.
+        """
+        return replace(self, **overrides)
+
 
 # --------------------------------------------------------------------------
 # Analysis
@@ -209,6 +254,9 @@ def _sentences(text: str) -> List[str]:
 
 
 def _strip_markdown(text: str) -> str:
+    # Comments first: they are editorial metadata, not prose, and their `--`
+    # would otherwise be counted as em dashes. See discover.strip_comments.
+    text = strip_comments(text)
     text = re.sub(r"^#.*$", "", text, flags=re.MULTILINE)   # headings
     text = re.sub(r"^\s*>.*$", "", text, flags=re.MULTILINE)  # blockquotes
     return text
@@ -428,6 +476,54 @@ def lint_manuscript(
             "Recurring construction not on any watchlist. Verify it is deliberate.",
         ))
 
+    # -- word echo (close-proximity repetition) -----------------------------
+    # repeated_ngrams and the phrase watchlist both find a tic repeated
+    # across a whole manuscript. This finds a distinctive word used twice in
+    # the same breath -- computed per chapter, never across a chapter
+    # boundary, and excluding character/place names (repeating a name is not
+    # an echo).
+    cast_names = {n.lower() for n in detect_names(joined)}
+    echo_counts: Dict[str, int] = {}
+    for name, text in stripped_by_file.items():
+        for word, _gap in window_echoes(
+            text, window_words=th.echo_window_words,
+            min_word_len=th.echo_min_word_len, exclude=cast_names,
+        ):
+            echo_counts[word] = echo_counts.get(word, 0) + 1
+    for word, n in sorted(echo_counts.items(), key=lambda kv: -kv[1]):
+        density = n / per_10k
+        if density > th.echo_per_10k:
+            findings.append(Finding(
+                "word_echo", "warn",
+                f'"{word}" repeats within {th.echo_window_words} words x{n} '
+                f"({density:.1f}/10k)",
+                f"<={th.echo_per_10k:.1f}/10k",
+                "A distinctive word echoing at close range reads as "
+                "unintentional even when manuscript-wide repetition is clean.",
+            ))
+
+    # -- sentence-opener repeats within a paragraph -------------------------
+    # Narrower than opener_monotony (which counts paragraph-initial words
+    # across the whole manuscript): a single paragraph can read as flat even
+    # when the manuscript-wide opener distribution looks fine.
+    opener_repeat_hits: List[Tuple[str, str, int]] = []  # (chapter, word, run)
+    for name, text in stripped_by_file.items():
+        for word, run in sentence_opener_repeats(
+            text, min_consecutive=th.opener_repeat_run_min,
+        ):
+            opener_repeat_hits.append((name, word, run))
+    if opener_repeat_hits:
+        worst = sorted(opener_repeat_hits, key=lambda h: -h[2])[:6]
+        findings.append(Finding(
+            "sentence_opener_repeat", "warn",
+            f"{len(opener_repeat_hits)} run(s) of {th.opener_repeat_run_min}+ "
+            "consecutive sentences sharing an opening word",
+            f"0 runs >= {th.opener_repeat_run_min}",
+            "Inside one paragraph, not across the manuscript -- vary how "
+            "consecutive sentences open.",
+            [f'{ch}: "{word}" x{run} in a row' for ch, word, run in worst],
+        ))
+
     # -- phrase escalation (front-third vs back-third density) -------------
     # "A phrase used twice in chapter 2 becomes eighty uses by chapter 14" -
     # a manuscript-wide average dilutes exactly this pattern into invisibility
@@ -464,6 +560,37 @@ def lint_manuscript(
                 f"<={th.escalation_ratio:.1f}x growth",
                 "This tic compounds across the manuscript - rare early, common "
                 "late. A whole-book average would have hidden it.",
+            ))
+
+        # -- voice drift (speaker pairs converging over the manuscript) ----
+        # voice_collisions catches two characters sounding alike within a
+        # chapter; this catches two characters who started distinguishable
+        # and flattened toward each other over a long book -- the failure
+        # mode neither a single-chapter check nor a whole-book average sees.
+        first_by_speaker, _ = dialogue_by_speaker(first_text)
+        last_by_speaker, _ = dialogue_by_speaker(last_text)
+        converging, insufficient = speaker_drift(first_by_speaker, last_by_speaker)
+        if converging:
+            findings.append(Finding(
+                "voice_drift", "warn",
+                f"{len(converging)} speaker pair(s) converging toward the same "
+                "dialogue signature over the manuscript",
+                "0 converging pairs",
+                "Distinguishable early, statistically indistinguishable by the "
+                "end (avg line length, question rate, contraction rate) -- see "
+                "voice_collisions for what 'indistinguishable' means here.",
+                [f"{a} / {b}" for a, b in converging],
+            ))
+        if insufficient:
+            findings.append(Finding(
+                "voice_drift_insufficient_data", "info",
+                f"{len(insufficient)} speaker(s) with too little dialogue in the "
+                "first or last third to check for drift",
+                f">= {5} lines in both thirds",
+                "Not a finding -- 'not enough dialogue to tell' is different "
+                "from 'no drift detected', and reporting it separately keeps "
+                "a thin-dialogue secondary character from silently passing.",
+                insufficient[:10],
             ))
 
     # -- readability and dialogue ratio ------------------------------------

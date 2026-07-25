@@ -38,6 +38,9 @@ phase_3_drafting:
   checks:
     - "timeline"
     - "lint"
+    - "macro"
+    - "texture"
+    - "voice_lexicon"
     - "chapter_order"
     - "wordcount:0.85:1.25"
   next: "Phase 4: Adversarial Audit"
@@ -51,6 +54,9 @@ phase_4_adversarial_audit:
   checks:
     - "timeline:required"
     - "lint"
+    - "macro"
+    - "texture"
+    - "voice_lexicon"
     - "chapter_order"
     - "wordcount:0.85:1.25"
   next: "Phase 5: Final Score"
@@ -85,5 +91,6 @@ phase_7_production:
     - "chapter_order"
     - "proof"
     - "wordcount:0.85:1.25"
+    - "human_pass"
     - "epub"
   next: ""

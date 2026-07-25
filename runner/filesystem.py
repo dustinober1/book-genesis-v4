@@ -368,13 +368,23 @@ def create_demo(target: Path, *, adapter: str, model_name: str) -> None:
         language="en",
         force=True,
     )
+    # The demo has no human in the loop by construction -- this is exactly
+    # what the human_pass gate's escape hatch (runner/gates.py) exists for,
+    # not a way to dodge the gate on a real project.
+    state_set(target, "project.skip_human_pass", "true", create=True)
 
     while load_state_summary(target)["status"] != "completed":
         phase = current_phase(target)
         fill_outputs_for_demo(target, phase)
         result = advance_phase(target)
         if not result["ok"]:
-            raise RuntimeError(f"Demo could not advance: {result['pending']}")
+            # A check failure leaves `pending` empty and puts the reason in
+            # `failed_checks` -- reporting only `pending` here used to raise
+            # "Demo could not advance: []", which is exactly how a new gate
+            # check would surface with no way to tell what actually failed.
+            raise RuntimeError(
+                f"Demo could not advance: pending={result['pending']} "
+                f"failed_checks={result['failed_checks']}")
 
     (target / "RUN_REPORT.md").write_text(
         "# Run Report\n\n"
@@ -460,6 +470,11 @@ def fill_outputs_for_demo(target: Path, phase: Phase) -> None:
 _DEMO_CHAPTERS: Dict[str, str] = {
     "chapter-01.md": (
         "# Chapter 1: The Ledger\n\n"
+        # Every real chapter carries this header (agents/book-writer.md).
+        # It stayed out of the fixture for years, which is exactly why the
+        # comment-leaking-into-the-EPUB and comment-inflating-em-dash-count
+        # bugs shipped unnoticed: no test chapter ever had a comment in it.
+        "<!-- Word count: 220 | Target: 220 | Anchor: the ledger's seal -->\n\n"
         "Mira Voss set the lantern on the workbench and pried open the crate. "
         "Sawdust drifted across her sleeve and settled on the floorboards. "
         "Inside, wrapped in oilcloth, lay a bound ledger stamped with a seal "
